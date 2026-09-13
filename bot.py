@@ -1,13 +1,51 @@
 import os
 import time
 import requests
+import gspread
+import google.auth
+
+# =========================
+# Settings
+# =========================
 
 BALE_TOKEN = os.environ["BALE_TOKEN"]
+GOOGLE_SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
 
 BASE_URL = f"https://tapi.bale.ai/bot{BALE_TOKEN}"
 
+# =========================
+# Google Sheets
+# =========================
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+credentials, project = google.auth.default(scopes=SCOPES)
+
+gc = gspread.authorize(credentials)
+
+spreadsheet = gc.open_by_key(GOOGLE_SHEET_ID)
+
+users_sheet = spreadsheet.worksheet("Users")
+
+print("Google Sheets connected successfully.")
+
+
+# =========================
+# Temporary user states
+# =========================
+
+waiting_for_name = {}
+
+
+# =========================
+# Bale functions
+# =========================
 
 def send_message(chat_id, text, keyboard=None):
+
     data = {
         "chat_id": chat_id,
         "text": text
@@ -29,7 +67,12 @@ def send_message(chat_id, text, keyboard=None):
     print("Send message:", response.status_code, response.text)
 
 
+# =========================
+# Main menu
+# =========================
+
 def main_menu():
+
     return [
         [{"text": "📦 شروع شمارش موجودی"}],
         [{"text": "📋 موجودی‌های ثبت‌شده"}],
@@ -38,106 +81,197 @@ def main_menu():
     ]
 
 
+# =========================
+# Find user
+# =========================
+
+def find_user(chat_id):
+
+    records = users_sheet.get_all_records()
+
+    for index, user in enumerate(records, start=2):
+
+        if str(user.get("Chat ID", "")).strip() == str(chat_id):
+
+            return index, user
+
+    return None, None
+
+
+# =========================
+# Register user
+# =========================
+
+def register_user(chat_id, full_name, username):
+
+    parts = full_name.strip().split()
+
+    first_name = parts[0]
+
+    if len(parts) > 1:
+        last_name = " ".join(parts[1:])
+    else:
+        last_name = ""
+
+    users_sheet.append_row([
+        str(chat_id),
+        first_name,
+        last_name,
+        username,
+        "فعال"
+    ])
+
+    print(f"New user registered: {chat_id} - {full_name}")
+
+
+# =========================
+# Handle messages
+# =========================
+
 def handle_message(message):
+
     chat = message.get("chat", {})
+
     chat_id = chat.get("id")
+
     text = message.get("text", "").strip()
+
+    username = chat.get("username", "")
 
     if not chat_id:
         return
 
-    if text == "/start":
+
+    # -------------------------
+    # Waiting for registration
+    # -------------------------
+
+    if chat_id in waiting_for_name:
+
+        if not text:
+            send_message(
+                chat_id,
+                "لطفاً نام و نام خانوادگی خود را وارد کنید."
+            )
+            return
+
+        register_user(
+            chat_id,
+            text,
+            username
+        )
+
+        del waiting_for_name[chat_id]
+
         send_message(
             chat_id,
-            "سلام 👋\n"
-            "به ربات کنترل موجودی هایپرمارکت مارلیک ۵ خوش آمدید.\n\n"
-            "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+            f"✅ ثبت‌نام شما با موفقیت انجام شد.\n\n"
+            f"نام ثبت‌شده: {text}\n\n"
+            f"حالا می‌توانید از منوی اصلی استفاده کنید.",
             main_menu()
         )
 
-    elif text == "📦 شروع شمارش موجودی":
+        return
+
+
+    # -------------------------
+    # /start
+    # -------------------------
+
+    if text == "/start":
+
+        row, user = find_user(chat_id)
+
+        if user:
+
+            send_message(
+                chat_id,
+                "سلام 👋\n"
+                "خوش آمدید.\n\n"
+                "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+                main_menu()
+            )
+
+        else:
+
+            waiting_for_name[chat_id] = True
+
+            send_message(
+                chat_id,
+                "سلام 👋\n\n"
+                "برای استفاده از ربات ابتدا باید ثبت‌نام کنید.\n\n"
+                "لطفاً **نام و نام خانوادگی** خود را وارد کنید."
+            )
+
+        return
+
+
+    # -------------------------
+    # Start inventory
+    # -------------------------
+
+    if text == "📦 شروع شمارش موجودی":
+
+        row, user = find_user(chat_id)
+
+        if not user:
+
+            waiting_for_name[chat_id] = True
+
+            send_message(
+                chat_id,
+                "ابتدا باید ثبت‌نام کنید.\n\n"
+                "لطفاً نام و نام خانوادگی خود را وارد کنید."
+            )
+
+            return
+
         send_message(
             chat_id,
             "📦 بخش شمارش موجودی\n\n"
-            "این بخش به‌زودی فعال می‌شود.\n"
-            "در مرحله بعد، محصولات اختصاص‌یافته به شما نمایش داده خواهد شد.",
+            "این بخش در مرحله بعد فعال می‌شود.",
             main_menu()
         )
 
-    elif text == "📋 موجودی‌های ثبت‌شده":
+        return
+
+
+    # -------------------------
+    # Registered inventories
+    # -------------------------
+
+    if text == "📋 موجودی‌های ثبت‌شده":
+
         send_message(
             chat_id,
             "📋 موجودی‌های ثبت‌شده\n\n"
-            "هنوز اطلاعاتی برای نمایش ثبت نشده است.",
+            "در حال حاضر اطلاعاتی برای نمایش وجود ندارد.",
             main_menu()
         )
 
-    elif text == "👤 اطلاعات کاربر":
-        first_name = chat.get("first_name", "ثبت نشده")
-        username = chat.get("username", "ثبت نشده")
-
-        send_message(
-            chat_id,
-            f"👤 اطلاعات کاربر\n\n"
-            f"نام: {first_name}\n"
-            f"Username: {username}\n"
-            f"Chat ID: {chat_id}",
-            main_menu()
-        )
-
-    elif text == "❓ راهنما":
-        send_message(
-            chat_id,
-            "❓ راهنمای ربات\n\n"
-            "از گزینه «شروع شمارش موجودی» برای ثبت موجودی محصولات استفاده کنید.\n"
-            "در مراحل بعد، موجودی واقعی و موجودی آنلاین از شما دریافت خواهد شد.",
-            main_menu()
-        )
-
-    else:
-        send_message(
-            chat_id,
-            "لطفاً یکی از گزینه‌های منو را انتخاب کنید.",
-            main_menu()
-        )
+        return
 
 
-def main():
-    print("Inventory bot started...")
+    # -------------------------
+    # User information
+    # -------------------------
 
-    offset = None
+    if text == "👤 اطلاعات کاربر":
 
-    while True:
-        try:
-            params = {
-                "timeout": 30
-            }
+        row, user = find_user(chat_id)
 
-            if offset is not None:
-                params["offset"] = offset
+        if not user:
 
-            response = requests.get(
-                f"{BASE_URL}/getUpdates",
-                params=params,
-                timeout=40
+            waiting_for_name[chat_id] = True
+
+            send_message(
+                chat_id,
+                "شما هنوز ثبت‌نام نکرده‌اید.\n\n"
+                "لطفاً نام و نام خانوادگی خود را وارد کنید."
             )
 
-            data = response.json()
-            print("Updates response:", data)
+            return
 
-            if data.get("ok"):
-                for update in data.get("result", []):
-                    offset = update["update_id"] + 1
-
-                    message = update.get("message")
-
-                    if message:
-                        handle_message(message)
-
-        except Exception as error:
-            print("Error:", error)
-            time.sleep(5)
-
-
-if __name__ == "__main__":
-    main()
+        first_name = user.get("نام", "")
+        last_name = user.get("نام خانوادگی", "")
+        username_saved = user.get("Username
