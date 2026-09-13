@@ -1,0 +1,36 @@
+name: Bale Inventory Bot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  inventory-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/386194470839/locations/global/workloadIdentityPools/github-actions/providers/github-actions"
+          service_account: "bale-reminder@bale-reminder-bot.iam.gserviceaccount.com"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run inventory bot
+        env:
+          BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+        run: python bot.py
