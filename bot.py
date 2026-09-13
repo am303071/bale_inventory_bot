@@ -14,7 +14,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-credentials, project = google.auth.default(scopes=SCOPES)
+credentials, _ = google.auth.default(scopes=SCOPES)
 gc = gspread.authorize(credentials)
 
 spreadsheet = gc.open_by_key(GOOGLE_SHEET_ID)
@@ -24,7 +24,7 @@ staff_sheet = spreadsheet.worksheet("Staff")
 
 print("Google Sheets connected successfully.")
 
-waiting_for_code = {}
+waiting_for_code = set()
 
 
 def send_message(chat_id, text, keyboard=None):
@@ -61,39 +61,44 @@ def main_menu():
 def find_user(chat_id):
     records = users_sheet.get_all_records()
 
-    for index, user in enumerate(records, start=2):
-        if str(user.get("Chat ID", "")).strip() == str(chat_id):
-            return index, user
+    for row_number, user in enumerate(records, start=2):
+        if str(user.get("Chat ID", "")).strip() == str(chat_id).strip():
+            return row_number, user
 
     return None, None
 
 
 def find_staff(personnel_code):
+    code = str(personnel_code).strip()
+
     records = staff_sheet.get_all_records()
 
-    for index, staff in enumerate(records, start=2):
+    for row_number, staff in enumerate(records, start=2):
+        staff_code = str(
+            staff.get("کد پرسنلی", "")
+        ).strip()
 
-        code = str(staff.get("کد پرسنلی", "")).strip()
-        status = str(staff.get("وضعیت", "")).strip()
+        status = str(
+            staff.get("وضعیت", "")
+        ).strip()
 
-        if code == str(personnel_code).strip():
-
-            if status == "فعال":
-                return index, staff
-
-            return None, None
+        if staff_code == code and status == "فعال":
+            return row_number, staff
 
     return None, None
 
 
-def personnel_code_already_registered(personnel_code):
+def code_already_registered(personnel_code):
+    code = str(personnel_code).strip()
+
     records = users_sheet.get_all_records()
 
     for user in records:
+        registered_code = str(
+            user.get("کد پرسنلی", "")
+        ).strip()
 
-        code = str(user.get("کد پرسنلی", "")).strip()
-
-        if code == str(personnel_code).strip():
+        if registered_code == code:
             return True
 
     return False
@@ -107,8 +112,9 @@ def register_user(chat_id, personnel_code, staff, username):
 
     parts = full_name.split()
 
-    first_name = parts[0] if len(parts) >= 1 else ""
-    last_name = " ".join(parts[1:]) if len(parts) >= 2 else ""
+    first_name = parts[0] if parts else ""
+
+    last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
 
     users_sheet.append_row([
         str(chat_id),
@@ -119,11 +125,6 @@ def register_user(chat_id, personnel_code, staff, username):
         "فعال"
     ])
 
-    print(
-        f"New user registered: "
-        f"{personnel_code} - {full_name} - {chat_id}"
-    )
-
 
 def handle_message(message):
 
@@ -131,7 +132,9 @@ def handle_message(message):
 
     chat_id = chat.get("id")
 
-    text = message.get("text", "").strip()
+    text = str(
+        message.get("text", "")
+    ).strip()
 
     username = chat.get("username", "")
 
@@ -140,14 +143,12 @@ def handle_message(message):
 
 
     # =========================
-    # Waiting for personnel code
+    # Personnel code registration
     # =========================
 
     if chat_id in waiting_for_code:
 
-        personnel_code = text
-
-        row, staff = find_staff(personnel_code)
+        _, staff = find_staff(text)
 
         if not staff:
 
@@ -160,9 +161,9 @@ def handle_message(message):
             return
 
 
-        # جلوگیری از ثبت یک کد برای چند نفر
+        if code_already_registered(text):
 
-        if personnel_code_already_registered(personnel_code):
+            waiting_for_code.discard(chat_id)
 
             send_message(
                 chat_id,
@@ -171,33 +172,28 @@ def handle_message(message):
                 "با مسئول فروشگاه تماس بگیرید."
             )
 
-            del waiting_for_code[chat_id]
-
             return
 
 
-        # ثبت کاربر
-
         register_user(
             chat_id,
-            personnel_code,
+            text,
             staff,
             username
         )
 
-        del waiting_for_code[chat_id]
+        waiting_for_code.discard(chat_id)
 
-        full_name = staff.get(
-            "نام و نام خانوادگی",
-            ""
-        )
+        full_name = str(
+            staff.get("نام و نام خانوادگی", "")
+        ).strip()
 
         send_message(
             chat_id,
             f"✅ ثبت‌نام با موفقیت انجام شد.\n\n"
             f"نام: {full_name}\n"
-            f"کد پرسنلی: {personnel_code}\n\n"
-            f"حساب شما با موفقیت فعال شد.",
+            f"کد پرسنلی: {text}\n\n"
+            "حساب شما با موفقیت فعال شد.",
             main_menu()
         )
 
@@ -205,12 +201,12 @@ def handle_message(message):
 
 
     # =========================
-    # /start
+    # Start
     # =========================
 
     if text == "/start":
 
-        row, user = find_user(chat_id)
+        _, user = find_user(chat_id)
 
         if user:
 
@@ -224,7 +220,7 @@ def handle_message(message):
 
         else:
 
-            waiting_for_code[chat_id] = True
+            waiting_for_code.add(chat_id)
 
             send_message(
                 chat_id,
@@ -242,11 +238,11 @@ def handle_message(message):
 
     if text == "📦 شروع شمارش موجودی":
 
-        row, user = find_user(chat_id)
+        _, user = find_user(chat_id)
 
         if not user:
 
-            waiting_for_code[chat_id] = True
+            waiting_for_code.add(chat_id)
 
             send_message(
                 chat_id,
@@ -288,11 +284,11 @@ def handle_message(message):
 
     if text == "👤 اطلاعات کاربر":
 
-        row, user = find_user(chat_id)
+        _, user = find_user(chat_id)
 
         if not user:
 
-            waiting_for_code[chat_id] = True
+            waiting_for_code.add(chat_id)
 
             send_message(
                 chat_id,
@@ -302,34 +298,98 @@ def handle_message(message):
 
             return
 
-        personnel_code = user.get(
-            "کد پرسنلی",
-            ""
-        )
-
-        first_name = user.get(
-            "نام",
-            ""
-        )
-
-        last_name = user.get(
-            "نام خانوادگی",
-            ""
-        )
-
-        username_saved = user.get(
-            "Username",
-            ""
-        )
-
-        status = user.get(
-            "وضعیت",
-            ""
-        )
+        full_name = (
+            f"{user.get('نام', '')} "
+            f"{user.get('نام خانوادگی', '')}"
+        ).strip()
 
         send_message(
             chat_id,
             f"👤 اطلاعات کاربر\n\n"
-            f"نام: {first_name} {last_name}\n"
-            f"کد پرسنلی: {personnel_code}\n"
-            f"Username: {username_saved
+            f"نام: {full_name}\n"
+            f"کد پرسنلی: {user.get('کد پرسنلی', '')}\n"
+            f"Username: {user.get('Username', '')}\n"
+            f"وضعیت: {user.get('وضعیت', '')}",
+            main_menu()
+        )
+
+        return
+
+
+    # =========================
+    # Help
+    # =========================
+
+    if text == "❓ راهنما":
+
+        send_message(
+            chat_id,
+            "❓ راهنمای ربات\n\n"
+            "برای شروع شمارش موجودی، گزینه "
+            "«📦 شروع شمارش موجودی» را انتخاب کنید.\n\n"
+            "در مراحل بعد محصولات اختصاص‌یافته "
+            "به شما نمایش داده خواهد شد.",
+            main_menu()
+        )
+
+        return
+
+
+    # =========================
+    # Unknown message
+    # =========================
+
+    send_message(
+        chat_id,
+        "لطفاً یکی از گزینه‌های منو را انتخاب کنید.",
+        main_menu()
+    )
+
+
+def main():
+
+    print("Inventory bot started...")
+
+    offset = None
+
+    while True:
+
+        try:
+
+            params = {
+                "timeout": 30
+            }
+
+            if offset is not None:
+                params["offset"] = offset
+
+            response = requests.get(
+                f"{BASE_URL}/getUpdates",
+                params=params,
+                timeout=40
+            )
+
+            data = response.json()
+
+            print("Updates response:", data)
+
+            if data.get("ok"):
+
+                for update in data.get("result", []):
+
+                    offset = update["update_id"] + 1
+
+                    message = update.get("message")
+
+                    if message:
+                        handle_message(message)
+
+        except Exception as error:
+
+            print("Error:", error)
+
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()
