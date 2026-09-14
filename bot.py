@@ -226,13 +226,32 @@ def register_user(
 ):
 
     full_name = clean(
-        staff.get("نام و نام خانوادگی", "")
+        staff.get(
+            "نام و نام خانوادگی",
+            staff.get(
+                "Employee_Name",
+                "",
+            ),
+        )
     )
+
+    if not full_name:
+
+        full_name = clean(
+            staff.get(
+                "Employee_Name",
+                "",
+            )
+        )
 
     parts = full_name.split()
 
     first_name = parts[0] if parts else ""
     last_name = " ".join(parts[1:])
+
+    # -----------------------------------------------------
+    # Register user in Users sheet
+    # -----------------------------------------------------
 
     users_sheet.append_row(
         [
@@ -245,6 +264,41 @@ def register_user(
         ],
         value_input_option="USER_ENTERED",
     )
+
+    # -----------------------------------------------------
+    # Save Bale Chat ID in Employees sheet
+    # -----------------------------------------------------
+
+    employee_id = clean(
+        staff.get(
+            "Employee_ID",
+            "",
+        )
+    )
+
+    employee_row, employee = find_employee_by_id(
+        employee_id
+    )
+
+    if employee_row:
+
+        headers = employees_sheet.row_values(1)
+
+        if "Bale_Chat_ID" in headers:
+
+            column = headers.index(
+                "Bale_Chat_ID"
+            ) + 1
+
+            employees_sheet.update_cell(
+                employee_row,
+                column,
+                clean(chat_id),
+            )
+
+            print(
+                f"Bale_Chat_ID updated for Employee_ID={employee_id}"
+            )
 
 
 def update_user_chat_id(
@@ -926,29 +980,17 @@ def complete_assignment(
 # =========================================================
 # USER / EMPLOYEE INFORMATION
 # =========================================================
-
+ 
 def get_user_employee(chat_id):
 
     user_row, user = find_user(chat_id)
 
     if not user:
-
         return None, None, None
 
-    personnel_code = clean(
-        user.get(
-            "کد پرسنلی",
-            "",
-        )
+    employee_row, employee = find_employee_by_chat_id(
+        chat_id
     )
-
-    employee_row, employee = None, None
-
-    if personnel_code:
-
-        employee_row, employee = find_employee_by_id(
-            personnel_code
-        )
 
     return user, employee_row, employee
 
