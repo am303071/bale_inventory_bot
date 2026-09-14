@@ -496,6 +496,10 @@ def get_active_control_day():
 
     today = today_date()
 
+    # تبدیل تاریخ امروز به هر دو فرمت ممکن
+    today_dash = today.replace("-", "/")
+    today_slash = today.replace("/", "-")
+
     for row in records:
 
         control_date = clean(
@@ -512,13 +516,24 @@ def get_active_control_day():
             )
         ).upper()
 
-        if (
-            control_date == today
-            and status in (
-                "ACTIVE",
-                "OPEN",
-                "فعال",
-            )
+        # نرمال‌سازی فرمت تاریخ
+        control_date_normalized = control_date.replace(
+            "/",
+            "-"
+        )
+
+        # بررسی تاریخ
+        if control_date_normalized != today_slash:
+
+            continue
+
+        # وضعیت‌های قابل قبول
+        if status in (
+            "ACTIVE",
+            "OPEN",
+            "PLANNED",
+            "فعال",
+            "برنامه‌ریزی‌شده",
         ):
 
             return row
