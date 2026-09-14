@@ -829,7 +829,8 @@ def ensure_today_assignments():
     return create_assignments(
         control_date
     )
- def save_inventory_record(
+    
+def save_inventory_record(
     assignment,
     real_stock,
     online_stock,
@@ -879,17 +880,22 @@ def ensure_today_assignments():
 
     if difference == 0:
         variance_type = "NO_VARIANCE"
+
     elif difference > 0:
         variance_type = "SURPLUS"
+
     else:
         variance_type = "SHORTAGE"
 
     if online_stock == 0:
+
         if difference == 0:
             variance_percent = 0
         else:
             variance_percent = ""
+
     else:
+
         variance_percent = (
             abs(difference)
             / online_stock
@@ -919,8 +925,7 @@ def ensure_today_assignments():
 
     print(
         f"Inventory record created: {record_id}"
-    )               
-
+    )
 
 # =========================================================
 # ASSIGNMENT LOOKUP
