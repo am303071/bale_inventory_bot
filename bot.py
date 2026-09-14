@@ -1,3 +1,5 @@
+print("### BOT.PY LOADED ###", flush=True)
+
 import os
 import time
 import uuid
