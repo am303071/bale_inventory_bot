@@ -1758,7 +1758,7 @@ def handle_message(message):
         handle_personnel_code(
             chat_id,
             text,
-            username,
+            userna
         )
 
         return
