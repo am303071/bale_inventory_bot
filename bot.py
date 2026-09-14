@@ -163,7 +163,7 @@ def find_user(chat_id):
     for row_number, user in enumerate(records, start=2):
 
         saved_chat_id = clean(
-            user.get("Chat ID", "")
+            user.get("Chat_ID", "")
         )
 
         if saved_chat_id == clean(chat_id):
