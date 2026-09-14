@@ -1933,9 +1933,9 @@ print("### REACHED MAIN DEFINITION ###", flush=True)
 
 def main():
 
-    print("=" * 60)
-    print("Bale Inventory Control Bot")
-    print("=" * 60)
+    print("=" * 60, flush=True)
+    print("Bale Inventory Control Bot", flush=True)
+    print("=" * 60, flush=True)
 
     if not test_bale_connection():
 
@@ -1944,7 +1944,8 @@ def main():
         )
 
     print(
-        "Bot started..."
+    "Bot started...",
+    flush=True
     )
 
     offset = None
