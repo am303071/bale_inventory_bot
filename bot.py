@@ -387,25 +387,14 @@ def find_employee_by_chat_id(chat_id):
 
 
 def find_employee_by_id(employee_id):
-
     employee_id = clean(employee_id)
 
     records = employees_sheet.get_all_records()
 
-    for row_number, employee in enumerate(
-        records,
-        start=2,
-    ):
-
-        saved_id = clean(
-            employee.get(
-                "Employee_ID",
-                "",
-            )
-        )
+    for row_number, employee in enumerate(records, start=2):
+        saved_id = clean(employee.get("Employee_ID", ""))
 
         if saved_id == employee_id:
-
             return row_number, employee
 
     return None, None
@@ -1085,69 +1074,78 @@ def handle_start(
     )
 
 
-def handle_personnel_code(
-    chat_id,
-    text,
-    username,
-):
+def handle_personnel_code(chat_id, personnel_code):
+    personnel_code = clean(personnel_code)
 
-    personnel_code = clean(text)
-
-    staff_row, staff = find_staff(
-        personnel_code
-    )
+    # پیدا کردن پرسنل در Staff
+    staff_row, staff = find_staff(personnel_code)
 
     if not staff:
-
         send_message(
             chat_id,
-            "❌ کد پرسنلی پیدا نشد یا پرسنل فعال نیست.\n\n"
-            "لطفاً کد پرسنلی صحیح را وارد کنید.",
+            "❌ کد پرسنلی پیدا نشد یا پرسنل فعال نیست.\n"
+            "لطفاً کد پرسنلی صحیح را وارد کنید."
         )
-
         return
 
-    if code_already_registered(
-        personnel_code
-    ):
-
+    # بررسی ثبت قبلی
+    if code_already_registered(personnel_code):
         send_message(
             chat_id,
-            "⚠️ این کد پرسنلی قبلاً در سیستم ثبت شده است.",
+            "⚠️ این کد پرسنلی قبلاً ثبت شده است."
         )
-
-        waiting_for_code.discard(
-            clean(chat_id)
-        )
-
+        waiting_for_code.discard(chat_id)
+        send_main_menu(chat_id)
         return
 
+    # پیدا کردن پرسنل در Employees
+    employee_row, employee = find_employee_by_id(personnel_code)
+
+    if not employee:
+        send_message(
+            chat_id,
+            "❌ پرسنل در بخش Employees پیدا نشد.\n\n"
+            f"کد پرسنلی: {personnel_code}\n\n"
+            "لطفاً Employee_ID در بخش Employees را بررسی کنید."
+        )
+        return
+
+    # ثبت Chat ID در Employees
+    headers = employees_sheet.row_values(1)
+
+    if "Bale_Chat_ID" not in headers:
+        send_message(
+            chat_id,
+            "❌ ستون Bale_Chat_ID در بخش Employees پیدا نشد."
+        )
+        return
+
+    bale_chat_col = headers.index("Bale_Chat_ID") + 1
+
+    employees_sheet.update_cell(
+        employee_row,
+        bale_chat_col,
+        str(chat_id)
+    )
+
+    # ثبت کاربر در Users
     register_user(
         chat_id,
         personnel_code,
-        staff,
-        username,
+        staff
     )
 
-    waiting_for_code.discard(
-        clean(chat_id)
-    )
-
-    full_name = clean(
-        staff.get(
-            "نام و نام خانوادگی",
-            "",
-        )
-    )
+    waiting_for_code.discard(chat_id)
 
     send_message(
         chat_id,
-        "✅ ثبت‌نام با موفقیت انجام شد.\n\n"
-        f"👤 نام: {full_name}\n"
+        "✅ ثبت‌نام شما با موفقیت انجام شد.\n\n"
+        f"👤 {employee.get('Employee_Name', '')}\n"
         f"🆔 کد پرسنلی: {personnel_code}\n\n"
-        "اکنون می‌توانید از منوی اصلی استفاده کنید.",
-        main_menu(),
+        "حالا می‌توانید از منوی اصلی گزینه «📦 شروع شمارش موجودی» را انتخاب کنید."
     )
+
+    send_main_menu(chat_id)
 
 
 # =========================================================
