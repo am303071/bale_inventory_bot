@@ -1925,6 +1925,8 @@ def test_bale_connection():
         return False
 
 
+print("### REACHED MAIN DEFINITION ###", flush=True)
+
 # =========================================================
 # MAIN LOOP
 # =========================================================
