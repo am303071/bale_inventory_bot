@@ -492,13 +492,18 @@ def get_available_products():
 
 def get_active_control_day():
 
+    print("### CONTROL DAY CHECK START ###", flush=True)
+
     records = control_days_sheet.get_all_records()
 
-    today = today_date()
+    today = clean(today_date())
 
-    # تبدیل تاریخ امروز به هر دو فرمت ممکن
-    today_dash = today.replace("-", "/")
-    today_slash = today.replace("/", "-")
+    print(
+        f"BOT TODAY = [{today}]",
+        flush=True
+    )
+
+    today_normalized = today.replace("/", "-")
 
     for row in records:
 
@@ -516,18 +521,22 @@ def get_active_control_day():
             )
         ).upper()
 
-        # نرمال‌سازی فرمت تاریخ
-        control_date_normalized = control_date.replace(
-            "/",
-            "-"
+        control_date_normalized = (
+            control_date
+            .replace("/", "-")
+            .strip()
         )
 
-        # بررسی تاریخ
-        if control_date_normalized != today_slash:
+        print(
+            f"CONTROL DATE = [{control_date}] | "
+            f"NORMALIZED = [{control_date_normalized}] | "
+            f"STATUS = [{status}]",
+            flush=True
+        )
 
+        if control_date_normalized != today_normalized:
             continue
 
-        # وضعیت‌های قابل قبول
         if status in (
             "ACTIVE",
             "OPEN",
@@ -536,7 +545,17 @@ def get_active_control_day():
             "برنامه‌ریزی‌شده",
         ):
 
+            print(
+                "### CONTROL DAY FOUND ###",
+                flush=True
+            )
+
             return row
+
+    print(
+        "### NO CONTROL DAY FOUND ###",
+        flush=True
+    )
 
     return None
 
