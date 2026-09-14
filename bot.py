@@ -36,7 +36,7 @@ users_sheet = spreadsheet.worksheet("Users")
 staff_sheet = spreadsheet.worksheet("Staff")
 employees_sheet = spreadsheet.worksheet("Employees")
 products_sheet = spreadsheet.worksheet("Products")
-assigned_products_sheet = spreadsheet.worksheet("Assigned Products")
+assigned_products_sheet = spreadsheet.worksheet("Assignments")
 control_days_sheet = spreadsheet.worksheet("Control Days")
 
 print("Google Sheets connected successfully.")
