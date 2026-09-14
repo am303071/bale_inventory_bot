@@ -7,6 +7,7 @@ import requests
 import gspread
 import google.auth
 
+print("### IMPORTS COMPLETED ###", flush=True)
 
 # =========================================================
 # SETTINGS
