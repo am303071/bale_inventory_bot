@@ -598,7 +598,6 @@ def get_employee_assignments(
 
     return result
 
-
 def create_assignments(control_date):
 
     print(
@@ -645,7 +644,6 @@ def create_assignments(control_date):
         )
 
         if daily_target > 0:
-
             total_required += daily_target
 
     if len(products) < total_required:
@@ -686,16 +684,13 @@ def create_assignments(control_date):
         )
 
         if not employee_id:
-
             print(
                 f"Skipped employee without ID: "
                 f"{employee_name}"
             )
-
             continue
 
         if daily_target <= 0:
-
             continue
 
         for sequence in range(
@@ -704,7 +699,6 @@ def create_assignments(control_date):
         ):
 
             if product_index >= len(products):
-
                 break
 
             product = products[product_index]
@@ -727,18 +721,16 @@ def create_assignments(control_date):
                 uuid.uuid4()
             )
 
+            # دقیقاً ۹ ستون مطابق Assignments
             rows.append(
                 [
                     assignment_id,
                     control_date,
                     employee_id,
                     employee_name,
-                    sequence,
                     product_id,
                     product_name,
-                    "",
-                    "",
-                    "",
+                    sequence,
                     "PENDING",
                     "",
                 ]
@@ -798,11 +790,16 @@ def ensure_today_assignments():
 
     if assignment_exists(control_date):
 
+        print(
+            f"Assignments already exist for {control_date}"
+        )
+
         return True
 
     return create_assignments(
         control_date
     )
+                
 
 
 # =========================================================
