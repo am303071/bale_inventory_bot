@@ -1083,12 +1083,11 @@ def handle_personnel_code(chat_id, personnel_code):
     if not staff:
         send_message(
             chat_id,
-            "❌ کد پرسنلی پیدا نشد یا پرسنل فعال نیست.\n"
-            "لطفاً کد پرسنلی صحیح را وارد کنید."
+            "❌ کد پرسنلی پیدا نشد یا پرسنل فعال نیست."
         )
         return
 
-    # بررسی ثبت قبلی
+    # جلوگیری از ثبت کد تکراری
     if code_already_registered(personnel_code):
         send_message(
             chat_id,
@@ -1098,30 +1097,48 @@ def handle_personnel_code(chat_id, personnel_code):
         send_main_menu(chat_id)
         return
 
-    # پیدا کردن پرسنل در Employees
-    employee_row, employee = find_employee_by_id(personnel_code)
+    # نام کامل از Staff
+    staff_name = clean(
+        staff.get("نام و نام خانوادگی", "")
+    )
+
+    # پیدا کردن شخص در Employees بر اساس نام
+    employee_row = None
+    employee = None
+
+    employee_records = employees_sheet.get_all_records()
+
+    for row_number, emp in enumerate(employee_records, start=2):
+        employee_name = clean(
+            emp.get("Employee_Name", "")
+        )
+
+        if employee_name == staff_name:
+            employee_row = row_number
+            employee = emp
+            break
 
     if not employee:
         send_message(
             chat_id,
-            "❌ پرسنل در بخش Employees پیدا نشد.\n\n"
-            f"کد پرسنلی: {personnel_code}\n\n"
-            "لطفاً Employee_ID در بخش Employees را بررسی کنید."
+            "❌ اطلاعات شما در بخش Employees پیدا نشد.\n\n"
+            f"نام در Staff: {staff_name}"
         )
         return
 
-    # ثبت Chat ID در Employees
+    # پیدا کردن ستون Bale_Chat_ID
     headers = employees_sheet.row_values(1)
 
     if "Bale_Chat_ID" not in headers:
         send_message(
             chat_id,
-            "❌ ستون Bale_Chat_ID در بخش Employees پیدا نشد."
+            "❌ ستون Bale_Chat_ID در Employees وجود ندارد."
         )
         return
 
     bale_chat_col = headers.index("Bale_Chat_ID") + 1
 
+    # ثبت Chat ID در Employees
     employees_sheet.update_cell(
         employee_row,
         bale_chat_col,
@@ -1141,8 +1158,9 @@ def handle_personnel_code(chat_id, personnel_code):
         chat_id,
         "✅ ثبت‌نام شما با موفقیت انجام شد.\n\n"
         f"👤 {employee.get('Employee_Name', '')}\n"
-        f"🆔 کد پرسنلی: {personnel_code}\n\n"
-        "حالا می‌توانید از منوی اصلی گزینه «📦 شروع شمارش موجودی» را انتخاب کنید."
+        f"🆔 کد پرسنلی: {personnel_code}\n"
+        f"🔗 Employee ID: {employee.get('Employee_ID', '')}\n\n"
+        "حالا می‌توانید گزینه «📦 شروع شمارش موجودی» را انتخاب کنید."
     )
 
     send_main_menu(chat_id)
