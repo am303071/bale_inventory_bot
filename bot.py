@@ -217,32 +217,26 @@ def code_already_registered(personnel_code):
 
     return False
 
-
 def register_user(
     chat_id,
     personnel_code,
     staff,
-    username,
+    username="",
 ):
+    # -----------------------------------------------------
+    # Get full name from Staff
+    # -----------------------------------------------------
 
     full_name = clean(
         staff.get(
             "نام و نام خانوادگی",
-            staff.get(
-                "Employee_Name",
-                "",
-            ),
+            ""
         )
     )
 
-    if not full_name:
-
-        full_name = clean(
-            staff.get(
-                "Employee_Name",
-                "",
-            )
-        )
+    # -----------------------------------------------------
+    # Split name
+    # -----------------------------------------------------
 
     parts = full_name.split()
 
@@ -259,26 +253,44 @@ def register_user(
             personnel_code,
             first_name,
             last_name,
-            username,
+            clean(username),
             "فعال",
         ],
         value_input_option="USER_ENTERED",
     )
 
+    print(
+        f"User registered in Users: {personnel_code}"
+    )
+
     # -----------------------------------------------------
-    # Save Bale Chat ID in Employees sheet
+    # Find employee in Employees by name
     # -----------------------------------------------------
 
-    employee_id = clean(
-        staff.get(
-            "Employee_ID",
-            "",
+    employee_row = None
+    employee = None
+
+    employee_records = employees_sheet.get_all_records()
+
+    for row_number, emp in enumerate(
+        employee_records,
+        start=2
+    ):
+        employee_name = clean(
+            emp.get(
+                "Employee_Name",
+                ""
+            )
         )
-    )
 
-    employee_row, employee = find_employee_by_id(
-        employee_id
-    )
+        if employee_name == full_name:
+            employee_row = row_number
+            employee = emp
+            break
+
+    # -----------------------------------------------------
+    # Save Bale Chat ID in Employees
+    # -----------------------------------------------------
 
     if employee_row:
 
@@ -297,8 +309,21 @@ def register_user(
             )
 
             print(
-                f"Bale_Chat_ID updated for Employee_ID={employee_id}"
+                f"Bale_Chat_ID updated for "
+                f"Employee_ID={employee.get('Employee_ID', '')}"
             )
+
+        else:
+
+            print(
+                "ERROR: Bale_Chat_ID column not found"
+            )
+
+    else:
+
+        print(
+            f"ERROR: Employee not found by name: {full_name}"
+        )
 
 
 def update_user_chat_id(
