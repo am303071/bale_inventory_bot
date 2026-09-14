@@ -932,11 +932,24 @@ def save_inventory_record(
 # =========================================================
 
 def get_pending_assignment(
+def get_pending_assignment(
     employee_id,
     control_date,
 ):
 
-    records = assignments_sheet.get_all_records()
+    records = assignments_sheet.get_all_records(
+        expected_headers=[
+            "Assignment_ID",
+            "Control_Date",
+            "Employee_ID",
+            "Employee_Name",
+            "Product_ID",
+            "Product_Name",
+            "Sequence",
+            "Status",
+            "Completed_At",
+        ]
+    )
 
     for row_number, row in enumerate(
         records,
