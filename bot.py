@@ -1852,12 +1852,15 @@ def get_updates(offset=None):
         params["offset"] = offset
 
     try:
+        print("### GET UPDATES CALLED ###", flush=True)
 
         response = requests.get(
             f"{BASE_URL}/getUpdates",
             params=params,
             timeout=40,
         )
+        
+        print("### GET UPDATES RESPONSE RECEIVED ###", flush=True)
 
         print(
             "Get updates:",
