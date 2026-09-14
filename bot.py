@@ -39,6 +39,7 @@ employees_sheet = spreadsheet.worksheet("Employees")
 products_sheet = spreadsheet.worksheet("Products")
 assignments_sheet = spreadsheet.worksheet("Assignments")
 control_days_sheet = spreadsheet.worksheet("Control_Days")
+inventory_records_sheet = spreadsheet.worksheet("Inventory_Records")
 
 print("Google Sheets connected successfully.")
 
@@ -828,7 +829,97 @@ def ensure_today_assignments():
     return create_assignments(
         control_date
     )
-                
+ def save_inventory_record(
+    assignment,
+    real_stock,
+    online_stock,
+    difference,
+):
+
+    record_id = str(uuid.uuid4())
+
+    control_date = clean(
+        assignment.get(
+            "Control_Date",
+            today_date(),
+        )
+    )
+
+    employee_id = clean(
+        assignment.get(
+            "Employee_ID",
+            "",
+        )
+    )
+
+    employee_name = clean(
+        assignment.get(
+            "Employee_Name",
+            "",
+        )
+    )
+
+    product_id = clean(
+        assignment.get(
+            "Product_ID",
+            "",
+        )
+    )
+
+    product_name = clean(
+        assignment.get(
+            "Product_Name",
+            "",
+        )
+    )
+
+    control_time = time.strftime(
+        "%H:%M:%S"
+    )
+
+    if difference == 0:
+        variance_type = "NO_VARIANCE"
+    elif difference > 0:
+        variance_type = "SURPLUS"
+    else:
+        variance_type = "SHORTAGE"
+
+    if online_stock == 0:
+        if difference == 0:
+            variance_percent = 0
+        else:
+            variance_percent = ""
+    else:
+        variance_percent = (
+            abs(difference)
+            / online_stock
+            * 100
+        )
+
+    inventory_records_sheet.append_row(
+        [
+            record_id,
+            control_date,
+            control_time,
+            employee_id,
+            employee_name,
+            product_id,
+            product_name,
+            real_stock,
+            online_stock,
+            difference,
+            variance_type,
+            variance_percent,
+            "COMPLETED",
+            "FALSE",
+            current_datetime(),
+        ],
+        value_input_option="USER_ENTERED",
+    )
+
+    print(
+        f"Inventory record created: {record_id}"
+    )               
 
 
 # =========================================================
@@ -1008,21 +1099,51 @@ def complete_assignment(
         real_stock - online_stock
     )
 
-    update_assignment_real_stock(
-        row_number,
-        real_stock,
+    # دریافت اطلاعات Assignment
+    assignment_records = (
+        assignments_sheet.get_all_records()
     )
 
-    update_assignment_online_stock(
-        row_number,
-        online_stock,
-    )
+    assignment = None
 
-    update_assignment_difference(
-        row_number,
-        difference,
-    )
+    for number, row in enumerate(
+        assignment_records,
+        start=2,
+    ):
 
+        if number == row_number:
+
+            assignment = row
+            break
+
+    if not assignment:
+
+        print(
+            f"Assignment not found: row {row_number}"
+        )
+
+        return difference
+
+    # ثبت رکورد در Inventory_Records
+    try:
+
+        save_inventory_record(
+            assignment,
+            real_stock,
+            online_stock,
+            difference,
+        )
+
+    except Exception as error:
+
+        print(
+            "Inventory record error:",
+            error,
+        )
+
+        raise
+
+    # تکمیل Assignment
     update_assignment_status(
         row_number,
         "COMPLETED",
