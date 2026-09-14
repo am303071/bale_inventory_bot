@@ -1100,6 +1100,11 @@ def handle_start(
 
 
 def handle_personnel_code(chat_id, personnel_code):
+    
+    print("### HANDLE_PERSONNEL_CODE START ###")
+    print("CHAT_ID:", chat_id)
+    print("PERSONNEL_CODE:", personnel_code)
+    
     personnel_code = clean(personnel_code)
 
     # پیدا کردن پرسنل در Staff
@@ -1172,9 +1177,10 @@ def handle_personnel_code(chat_id, personnel_code):
 
     # ثبت کاربر در Users
     register_user(
-        chat_id,
-        personnel_code,
-        staff
+      chat_id,
+      personnel_code,
+      staff,
+      username="",
     )
 
     waiting_for_code.discard(chat_id)
