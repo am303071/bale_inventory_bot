@@ -931,7 +931,7 @@ def save_inventory_record(
 # ASSIGNMENT LOOKUP
 # =========================================================
 
-def get_pending_assignment(
+
 def get_pending_assignment(
     employee_id,
     control_date,
