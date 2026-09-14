@@ -60,13 +60,23 @@ def clean(value):
     return str(value or "").strip()
 
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 def today_date():
-    return time.strftime("%Y-%m-%d")
+    iran_time = datetime.now(
+        ZoneInfo("Asia/Tehran")
+    )
+    return iran_time.strftime("%Y-%m-%d")
 
 
 def current_datetime():
-    return time.strftime("%Y-%m-%d %H:%M:%S")
-
+    iran_time = datetime.now(
+        ZoneInfo("Asia/Tehran")
+    )
+    return iran_time.strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 def safe_int(value, default=50):
     try:
