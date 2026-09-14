@@ -2012,5 +2012,7 @@ def main():
 
 if __name__ == "__main__":
 
+    print("### CALLING MAIN ###", flush=True)
+
     main()
     
