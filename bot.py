@@ -1844,7 +1844,7 @@ def handle_message(message):
 def get_updates(offset=None):
 
     params = {
-        "timeout": 30,
+        "timeout": 5,
     }
 
     if offset is not None:
@@ -1857,7 +1857,7 @@ def get_updates(offset=None):
         response = requests.get(
             f"{BASE_URL}/getUpdates",
             params=params,
-            timeout=40,
+            timeout=10,
         )
         
         print("### GET UPDATES RESPONSE RECEIVED ###", flush=True)
