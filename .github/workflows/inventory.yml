@@ -33,4 +33,6 @@ jobs:
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          OKCS_USERNAME: ${{ secrets.OKCS_USERNAME }}
+          OKCS_PASSWORD: ${{ secrets.OKCS_PASSWORD }}
         run: python bot.py
