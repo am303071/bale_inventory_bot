@@ -15,6 +15,8 @@ print("### IMPORTS COMPLETED ###", flush=True)
 
 BALE_TOKEN = os.environ["BALE_TOKEN"]
 GOOGLE_SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
+OKCS_USERNAME = os.environ["OKCS_USERNAME"]
+OKCS_PASSWORD = os.environ["OKCS_PASSWORD"]
 
 BASE_URL = f"https://tapi.bale.ai/bot{BALE_TOKEN}"
 
@@ -23,7 +25,177 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
+# =========================================================
+# OKCS API
+# =========================================================
 
+class OKCS:
+
+    LOGIN_URL = "https://sap.okcs.com/login/auth"
+
+    INVENTORY_URL = (
+        "https://sap.okcs.com/inventory/contradiction/api/ICS/displayInventory"
+    )
+
+    def __init__(self, username, password):
+
+        self.username = username
+        self.password = password
+        self.token = None
+
+        self.session = requests.Session()
+
+        # جلوگیری از استفاده از Proxy/VPN تنظیم‌شده در محیط
+        self.session.trust_env = False
+
+    def login(self):
+
+        payload = {
+            "username": self.username,
+            "Password": self.password,
+            "fireBaseToken": "",
+        }
+
+        response = self.session.post(
+            self.LOGIN_URL,
+            json=payload,
+            headers={
+                "Content-Type": "application/json"
+            },
+            timeout=30,
+        )
+
+        print(
+            "OKCS Login:",
+            response.status_code,
+            response.text,
+            flush=True,
+        )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"OKCS login failed: HTTP {response.status_code}"
+            )
+
+        data = response.json()
+
+        token = data.get("token")
+
+        if not token:
+            raise Exception(
+                "OKCS login succeeded but token was not returned."
+            )
+
+        self.token = token
+
+        print(
+            "OKCS login successful.",
+            flush=True,
+        )
+
+        return True
+
+    def get_online_inventory(self, barcode):
+
+        barcode = clean(barcode)
+
+        if not barcode:
+            raise Exception(
+                "Product barcode is empty."
+            )
+
+        # اگر Token نداریم، ابتدا Login
+        if not self.token:
+            self.login()
+
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "itemNumber": barcode
+        }
+
+        response = self.session.post(
+            self.INVENTORY_URL,
+            json=payload,
+            headers=headers,
+            timeout=30,
+        )
+
+        print(
+            "OKCS Inventory:",
+            barcode,
+            response.status_code,
+            response.text,
+            flush=True,
+        )
+
+        # Token منقضی شده؛ یک بار Login مجدد
+        if response.status_code in (401, 403):
+
+            print(
+                "OKCS token expired. Logging in again...",
+                flush=True,
+            )
+
+            self.token = None
+            self.login()
+
+            headers["Authorization"] = (
+                f"Bearer {self.token}"
+            )
+
+            response = self.session.post(
+                self.INVENTORY_URL,
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+
+            print(
+                "OKCS Inventory Retry:",
+                barcode,
+                response.status_code,
+                response.text,
+                flush=True,
+            )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"OKCS inventory request failed: "
+                f"HTTP {response.status_code}"
+            )
+
+        data = response.json()
+
+        if "availableInventory" not in data:
+            raise Exception(
+                "availableInventory was not returned by OKCS."
+            )
+
+        online_stock = normalize_number(
+            data.get("availableInventory")
+        )
+
+        if online_stock is None or online_stock < 0:
+            raise Exception(
+                f"Invalid online inventory returned by OKCS: "
+                f"{data.get('availableInventory')}"
+            )
+
+        return online_stock
+        
+okcs = OKCS(
+    OKCS_USERNAME,
+    OKCS_PASSWORD,
+)
+
+print(
+    "OKCS client initialized successfully.",
+    flush=True,
+)
 # =========================================================
 # GOOGLE SHEETS CONNECTION
 # =========================================================
@@ -1117,7 +1289,10 @@ def complete_assignment(
         real_stock - online_stock
     )
 
+    # -----------------------------------------------------
     # دریافت اطلاعات Assignment
+    # -----------------------------------------------------
+
     assignment_records = (
         assignments_sheet.get_all_records()
     )
@@ -1136,13 +1311,41 @@ def complete_assignment(
 
     if not assignment:
 
-        print(
+        raise Exception(
             f"Assignment not found: row {row_number}"
         )
 
-        return difference
+    # -----------------------------------------------------
+    # ثبت موجودی واقعی در Assignment
+    # -----------------------------------------------------
 
+    update_assignment_real_stock(
+        row_number,
+        real_stock,
+    )
+
+    # -----------------------------------------------------
+    # ثبت موجودی آنلاین در Assignment
+    # -----------------------------------------------------
+
+    update_assignment_online_stock(
+        row_number,
+        online_stock,
+    )
+
+    # -----------------------------------------------------
+    # ثبت مغایرت در Assignment
+    # -----------------------------------------------------
+
+    update_assignment_difference(
+        row_number,
+        difference,
+    )
+
+    # -----------------------------------------------------
     # ثبت رکورد در Inventory_Records
+    # -----------------------------------------------------
+
     try:
 
         save_inventory_record(
@@ -1157,11 +1360,15 @@ def complete_assignment(
         print(
             "Inventory record error:",
             error,
+            flush=True,
         )
 
         raise
 
+    # -----------------------------------------------------
     # تکمیل Assignment
+    # -----------------------------------------------------
+
     update_assignment_status(
         row_number,
         "COMPLETED",
@@ -1172,7 +1379,6 @@ def complete_assignment(
     )
 
     return difference
-
 
 # =========================================================
 # USER / EMPLOYEE INFORMATION
@@ -1520,8 +1726,10 @@ def handle_real_stock(
     text,
 ):
 
+    chat_id = clean(chat_id)
+
     assignment = waiting_for_real_stock.get(
-        clean(chat_id)
+        chat_id
     )
 
     if not assignment:
@@ -1540,25 +1748,155 @@ def handle_real_stock(
 
         return
 
-    waiting_for_real_stock.pop(
-        clean(chat_id),
-        None,
+    product_id = clean(
+        assignment.get(
+            "Product_ID",
+            "",
+        )
     )
 
-    waiting_for_online_stock[
-        clean(chat_id)
-    ] = {
-        "assignment": assignment,
-        "real_stock": real_stock,
-    }
+    product_name = clean(
+        assignment.get(
+            "Product_Name",
+            "",
+        )
+    )
+
+    # -----------------------------------------------------
+    # دریافت موجودی آنلاین از OKCS
+    # -----------------------------------------------------
 
     send_message(
         chat_id,
-        "💻 ثبت موجودی آنلاین\n\n"
-        "لطفاً موجودی آنلاین همین کالا "
-        "را طبق نرم‌افزار سوپر اپ وارد کنید:",
+        "⏳ در حال دریافت موجودی آنلاین کالا از سیستم...",
     )
 
+    try:
+
+        online_stock = okcs.get_online_inventory(
+            product_id
+        )
+
+    except Exception as error:
+
+        print(
+            "OKCS inventory error:",
+            error,
+            flush=True,
+        )
+
+        send_message(
+            chat_id,
+            "❌ دریافت موجودی آنلاین این کالا از سیستم OKCS "
+            "با خطا مواجه شد.\n\n"
+            f"📦 کالا: {product_name}\n"
+            f"🆔 کد کالا: {product_id}\n\n"
+            "موجودی ثبت نشد.\n"
+            "لطفاً دوباره تلاش کنید.",
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # موجودی آنلاین با موفقیت دریافت شد
+    # -----------------------------------------------------
+
+    waiting_for_real_stock.pop(
+        chat_id,
+        None,
+    )
+
+    row_number = assignment.get(
+        "_row_number"
+    )
+
+    if not row_number:
+
+        send_message(
+            chat_id,
+            "❌ خطا در پیدا کردن ردیف کالا.\n"
+            "اطلاعات ثبت نشد.",
+        )
+
+        return
+
+    try:
+
+        difference = complete_assignment(
+            row_number,
+            real_stock,
+            online_stock,
+        )
+
+    except Exception as error:
+
+        print(
+            "Complete assignment error:",
+            error,
+            flush=True,
+        )
+
+        send_message(
+            chat_id,
+            "❌ خطا هنگام ثبت اطلاعات در Google Sheets.\n\n"
+            "اطلاعات این کالا تکمیل نشد. لطفاً دوباره تلاش کنید.",
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # متن مغایرت
+    # -----------------------------------------------------
+
+    if difference == 0:
+
+        difference_text = "✅ بدون مغایرت"
+
+    elif difference > 0:
+
+        difference_text = (
+            f"🟢 مازاد: +{difference}"
+        )
+
+    else:
+
+        difference_text = (
+            f"🔴 کسری: {difference}"
+        )
+
+    employee_id = clean(
+        assignment.get(
+            "Employee_ID",
+            "",
+        )
+    )
+
+    control_date = clean(
+        assignment.get(
+            "Control_Date",
+            today_date(),
+        )
+    )
+
+    total, completed, pending = (
+        get_employee_progress(
+            employee_id,
+            control_date,
+        )
+    )
+
+    send_message(
+        chat_id,
+        "✅ اطلاعات با موفقیت ثبت شد.\n\n"
+        f"📦 کالا: {product_name}\n"
+        f"📊 موجودی واقعی: {real_stock}\n"
+        f"💻 موجودی آنلاین: {online_stock}\n"
+        f"📌 مغایرت: {difference_text}\n\n"
+        f"📈 پیشرفت امروز:\n"
+        f"{completed} از {total} کالا تکمیل شده\n"
+        f"باقی‌مانده: {pending}",
+        main_menu(),
+    )
 
 # =========================================================
 # ONLINE STOCK
@@ -1954,19 +2292,7 @@ def handle_message(message):
 
         return
 
-    # -----------------------------------------------------
-    # ONLINE STOCK
-    # -----------------------------------------------------
-
-    if chat_id in waiting_for_online_stock:
-
-        handle_online_stock(
-            chat_id,
-            text,
-        )
-
-        return
-
+  
     # -----------------------------------------------------
     # MAIN MENU
     # -----------------------------------------------------
