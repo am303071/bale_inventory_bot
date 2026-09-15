@@ -50,93 +50,94 @@ class OKCS:
 
     def login(self):
 
-    print("=== OKCS LOGIN START ===", flush=True)
-    print("Login URL:", self.LOGIN_URL, flush=True)
+        print("=== OKCS LOGIN START ===", flush=True)
+        print("Login URL:", self.LOGIN_URL, flush=True)
 
-    payload = {
-        "username": self.username,
-        "Password": self.password,
-        "fireBaseToken": "",
-    }
+        payload = {
+            "username": self.username,
+            "Password": self.password,
+            "fireBaseToken": "",
+        }
 
-    try:
-        print("Sending login request to OKCS...", flush=True)
+        try:
+            print("Sending login request to OKCS...", flush=True)
 
-        response = self.session.post(
-            self.LOGIN_URL,
-            json=payload,
-            headers={
-                "Content-Type": "application/json"
-            },
-            timeout=30,
-        )
+            response = self.session.post(
+                self.LOGIN_URL,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json"
+                },
+                timeout=30,
+            )
+
+            print(
+                "OKCS Login HTTP Status:",
+                response.status_code,
+                flush=True,
+            )
+
+            print(
+                "OKCS Login Response:",
+                response.text[:1000],
+                flush=True,
+            )
+
+        except requests.exceptions.Timeout as e:
+            print(
+                "❌ OKCS LOGIN TIMEOUT:",
+                repr(e),
+                flush=True,
+            )
+            raise
+
+        except requests.exceptions.ConnectionError as e:
+            print(
+                "❌ OKCS LOGIN CONNECTION ERROR:",
+                repr(e),
+                flush=True,
+            )
+            raise
+
+        except requests.exceptions.RequestException as e:
+            print(
+                "❌ OKCS LOGIN REQUEST ERROR:",
+                repr(e),
+                flush=True,
+            )
+            raise
+
+        except Exception as e:
+            print(
+                "❌ OKCS LOGIN UNKNOWN ERROR:",
+                repr(e),
+                flush=True,
+            )
+            raise
+
+        if response.status_code != 200:
+            raise Exception(
+                f"OKCS login failed: HTTP {response.status_code}"
+            )
+
+        data = response.json()
+
+        token = data.get("token")
+
+        if not token:
+            raise Exception(
+                "OKCS login succeeded but token was not returned."
+            )
+
+        self.token = token
 
         print(
-            "OKCS Login HTTP Status:",
-            response.status_code,
+            "✅ OKCS login successful.",
             flush=True,
         )
 
-        print(
-            "OKCS Login Response:",
-            response.text[:1000],
-            flush=True,
-        )
-
-    except requests.exceptions.Timeout as e:
-        print(
-            "❌ OKCS LOGIN TIMEOUT:",
-            repr(e),
-            flush=True,
-        )
-        raise
-
-    except requests.exceptions.ConnectionError as e:
-        print(
-            "❌ OKCS LOGIN CONNECTION ERROR:",
-            repr(e),
-            flush=True,
-        )
-        raise
-
-    except requests.exceptions.RequestException as e:
-        print(
-            "❌ OKCS LOGIN REQUEST ERROR:",
-            repr(e),
-            flush=True,
-        )
-        raise
-
-    except Exception as e:
-        print(
-            "❌ OKCS LOGIN UNKNOWN ERROR:",
-            repr(e),
-            flush=True,
-        )
-        raise
-
-    if response.status_code != 200:
-        raise Exception(
-            f"OKCS login failed: HTTP {response.status_code}"
-        )
-
-    data = response.json()
-
-    token = data.get("token")
-
-    if not token:
-        raise Exception(
-            "OKCS login succeeded but token was not returned."
-        )
-
-    self.token = token
-
-    print(
-        "✅ OKCS login successful.",
-        flush=True,
-    )
-
-    return True
+        return True
+        
     def get_online_inventory(self, barcode):
 
         barcode = clean(barcode)
