@@ -28,8 +28,33 @@ jobs:
 
       - name: Test OKCS connection
         run: |
-          python -c "import requests; print(requests.get('https://sap.okcs.com', timeout=20).status_code)"
+         python - <<'PY'
+         import requests
+         import traceback
 
+         print("=== OKCS CONNECTION TEST ===")
+
+         try:
+             s = requests.Session()
+             s.trust_env = False
+
+             print("Connecting to https://sap.okcs.com ...")
+
+             r = s.get(
+                  "https://sap.okcs.com",
+                  timeout=20
+             )
+
+             print("STATUS:", r.status_code)
+             print("RESPONSE:", r.text[:500])
+
+         except Exception as e:
+             print("ERROR TYPE:", type(e).__name__)
+             print("ERROR:", str(e))
+             print("=== FULL TRACEBACK ===")
+             traceback.print_exc()
+             raise
+         PY
       - name: Install dependencies
         run: pip install -r requirements.txt
 
