@@ -26,6 +26,10 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Test OKCS connection
+        run: |
+          python -c "import requests; print(requests.get('https://sap.okcs.com', timeout=20).status_code)"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
