@@ -7,6 +7,11 @@ import requests
 import gspread
 import google.auth
 
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+import os
+
 print("### IMPORTS COMPLETED ###", flush=True)
 
 # =========================================================
@@ -243,8 +248,43 @@ print(
 # GOOGLE SHEETS CONNECTION
 # =========================================================
 
-credentials, _ = google.auth.default(scopes=SCOPES)
+TOKEN_FILE = os.path.expanduser(
+    "~/bale_inventory_bot/google_auth/token.json"
+)
+
+CREDENTIALS_FILE = os.path.expanduser(
+    "~/bale_inventory_bot/google_auth/credentials.json"
+)
+
+credentials = None
+
+if os.path.exists(TOKEN_FILE):
+    credentials = Credentials.from_authorized_user_file(
+        TOKEN_FILE,
+        SCOPES
+    )
+
+if not credentials or not credentials.valid:
+    if credentials and credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            CREDENTIALS_FILE,
+            SCOPES
+        )
+
+        credentials = flow.run_local_server(
+            host="127.0.0.1",
+            port=8080,
+            open_browser=False
+        )
+
+    with open(TOKEN_FILE, "w") as token:
+        token.write(credentials.to_json())
+
 gc = gspread.authorize(credentials)
+
+spreadsheet = gc.open_by_key(GOOGLE_SHEET_ID)
 
 spreadsheet = gc.open_by_key(GOOGLE_SHEET_ID)
 
@@ -276,19 +316,18 @@ def clean(value):
     return str(value or "").strip()
 
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, timedelta
 
 def today_date():
     iran_time = datetime.now(
-        ZoneInfo("Asia/Tehran")
+        timezone(timedelta(hours=3, minutes=30))
     )
     return iran_time.strftime("%Y-%m-%d")
 
 
 def current_datetime():
     iran_time = datetime.now(
-        ZoneInfo("Asia/Tehran")
+        timezone(timedelta(hours=3, minutes=30))
     )
     return iran_time.strftime(
         "%Y-%m-%d %H:%M:%S"

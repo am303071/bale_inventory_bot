@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+
+google_auth/
+.inventory_env
+.env
+
+credentials.json
+token.json
+*.json
+
+*.log
