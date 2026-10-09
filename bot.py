@@ -245,6 +245,38 @@ print(
     flush=True,
 )
 # =========================================================
+# EARLY ADMIN ALERT
+# =========================================================
+
+def send_startup_admin_alert(text):
+    try:
+        admin_chat_id = "1614153685"
+        url = f"https://tapi.bale.ai/bot{BALE_TOKEN}/sendMessage"
+
+        response = requests.post(
+            url,
+            json={
+                "chat_id": admin_chat_id,
+                "text": "🚨 هشدار مدیریتی ربات\\n\\n" + text,
+            },
+            timeout=15,
+        )
+
+        print(
+            "STARTUP ADMIN ALERT:",
+            response.status_code,
+            flush=True,
+        )
+
+    except Exception as error:
+        print(
+            "❌ STARTUP ADMIN ALERT ERROR:",
+            error,
+            flush=True,
+        )
+
+
+# =========================================================
 # GOOGLE SHEETS CONNECTION
 # =========================================================
 
@@ -266,7 +298,53 @@ if os.path.exists(TOKEN_FILE):
 
 if not credentials or not credentials.valid:
     if credentials and credentials.expired and credentials.refresh_token:
-        credentials.refresh(Request())
+        try:
+            credentials.refresh(Request())
+        except Exception as error:
+            error_text = str(error)
+
+            if "invalid_grant" in error_text.lower():
+                send_startup_admin_alert(
+                    "❌ توکن Google Sheets منقضی یا لغو شده است.\\n\\n"
+                    "لطفاً اتصال Google را دوباره تأیید کنید."
+                )
+
+                credentials = None
+
+                try:
+                    if os.path.exists(TOKEN_FILE):
+                        expired_token = TOKEN_FILE + ".expired"
+                        os.replace(TOKEN_FILE, expired_token)
+                        print(
+                            "⚠️ Expired Google token moved to:",
+                            expired_token,
+                            flush=True,
+                        )
+                except Exception as move_error:
+                    print(
+                        "❌ Could not move expired Google token:",
+                        move_error,
+                        flush=True,
+                    )
+
+                print(
+                    "🔐 Starting Google re-authentication...",
+                    flush=True,
+                )
+
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    CREDENTIALS_FILE,
+                    SCOPES
+                )
+
+                credentials = flow.run_local_server(
+                    host="127.0.0.1",
+                    port=8080,
+                    open_browser=False
+                )
+
+            else:
+                raise
     else:
         flow = InstalledAppFlow.from_client_secrets_file(
             CREDENTIALS_FILE,
@@ -306,7 +384,11 @@ print("Google Sheets connected successfully.")
 waiting_for_code = set()
 waiting_for_real_stock = {}
 waiting_for_online_stock = {}
+waiting_for_inventory_correction = {}
+waiting_for_inventory_confirmation = {}
 
+# شناسه حساب مدیریت برای دریافت هشدارهای سیستمی
+ADMIN_CHAT_ID = "1614153685"
 
 # =========================================================
 # HELPERS
@@ -409,7 +491,26 @@ def main_menu():
         [{"text": "📋 کالاهای اختصاص‌یافته"}],
         [{"text": "👤 اطلاعات کاربر"}],
         [{"text": "❓ راهنما"}],
+    [{"text": "✏️ اصلاح موجودی کالا"}],
     ]
+
+
+
+def send_admin_alert(text):
+    try:
+        send_message(
+            ADMIN_CHAT_ID,
+            "🚨 هشدار مدیریتی ربات\n\n" + text,
+        )
+        print(
+            "ADMIN ALERT SENT:",
+            text,
+        )
+    except Exception as error:
+        print(
+            "❌ ADMIN ALERT ERROR:",
+            error,
+        )
 
 
 def send_main_menu(chat_id):
@@ -696,7 +797,6 @@ def find_employee_by_id(employee_id):
 # =========================================================
 # PRODUCTS
 # =========================================================
-
 def get_available_products():
 
     records = products_sheet.get_all_records()
@@ -727,7 +827,6 @@ def get_available_products():
             )
 
             if product_id and product_name:
-
                 products.append(product)
 
     def get_score(product):
@@ -739,7 +838,6 @@ def get_available_products():
 
         try:
             return float(value or 0)
-
         except (ValueError, TypeError):
             return 0
 
@@ -750,115 +848,88 @@ def get_available_products():
 
     return products
 
-
 # =========================================================
 # CONTROL DAYS
 # =========================================================
 
-def get_active_control_day():
-
-    print("### CONTROL DAY CHECK START ###", flush=True)
-
+def get_active_control_period():
     records = control_days_sheet.get_all_records()
-
-    today = clean(today_date())
-
-    print(
-        f"BOT TODAY = [{today}]",
-        flush=True
-    )
-
-    today_normalized = today.replace("/", "-")
+    today = clean(today_date()).replace("/", "-")
 
     for row in records:
+        status = clean(row.get("Status", "")).upper()
 
-        control_date = clean(
-            row.get(
-                "Control_Date",
-                "",
-            )
-        )
-
-        status = clean(
-            row.get(
-                "Status",
-                "",
-            )
-        ).upper()
-
-        control_date_normalized = (
-            control_date
-            .replace("/", "-")
-            .strip()
-        )
-
-        print(
-            f"CONTROL DATE = [{control_date}] | "
-            f"NORMALIZED = [{control_date_normalized}] | "
-            f"STATUS = [{status}]",
-            flush=True
-        )
-
-        if control_date_normalized != today_normalized:
+        if status not in ("ACTIVE", "OPEN", "PLANNED", "فعال", "برنامه‌ریزی‌شده"):
             continue
 
-        if status in (
-            "ACTIVE",
-            "OPEN",
-            "PLANNED",
-            "فعال",
-            "برنامه‌ریزی‌شده",
-        ):
+        # حالت جدید: دوره چندروزه
+        period_start = clean(row.get("Period_Start", "")).replace("/", "-")
+        period_end = clean(row.get("Period_End", "")).replace("/", "-")
 
-            print(
-                "### CONTROL DAY FOUND ###",
-                flush=True
-            )
+        # حالت قدیمی: اگر Period وجود نداشت،
+        # Control_Date همان روز شروع و پایان محسوب می‌شود.
+        if not period_start:
+            period_start = clean(row.get("Control_Date", "")).replace("/", "-")
 
-            return row
+        if not period_end:
+            period_end = period_start
 
-    print(
-        "### NO CONTROL DAY FOUND ###",
-        flush=True
-    )
+        if period_start <= today <= period_end:
+            return {
+                "Period_Start": period_start,
+                "Period_End": period_end,
+                "Control_Date": period_start,
+                "Status": status
+            }
 
     return None
+
 
 # =========================================================
 # ASSIGNMENTS
 # =========================================================
 
-def assignment_exists(control_date):
-
+def employee_has_assignments(employee_id, period_start, period_end):
     records = assignments_sheet.get_all_records()
 
     for row in records:
+        row_employee_id = clean(row.get("Employee_ID", ""))
 
-        existing_date = clean(
-            row.get(
-                "Control_Date",
-                "",
-            )
-        )
+        row_start = clean(
+            row.get("Period_Start", "")
+        ).replace("/", "-")
 
-        if existing_date == clean(control_date):
+        row_end = clean(
+            row.get("Period_End", "")
+        ).replace("/", "-")
 
+        # پشتیبانی از تخصیص‌های قدیمی
+        if not row_start:
+            row_start = clean(row.get("Control_Date", ""))
+
+        if not row_end:
+            row_end = row_start
+
+        if (
+            row_employee_id == clean(employee_id)
+            and row_start == clean(period_start)
+        ):
             return True
 
     return False
 
-
 def get_employee_assignments(
     employee_id,
-    control_date,
+    period_start,
+    period_end,
 ):
-
     records = assignments_sheet.get_all_records()
-
     result = []
 
-    for row in records:
-
+    for row_number, row in enumerate(
+        records,
+        start=2,
+    ):
         row_employee_id = clean(
             row.get(
                 "Employee_ID",
@@ -866,224 +937,118 @@ def get_employee_assignments(
             )
         )
 
-        row_date = clean(
+        row_start = clean(
             row.get(
-                "Control_Date",
+                "Period_Start",
                 "",
             )
-        )
+        ).replace("/", "-")
+
+        row_end = clean(
+            row.get(
+                "Period_End",
+                "",
+            )
+        ).replace("/", "-")
+
+        if not row_start:
+            row_start = clean(
+                row.get(
+                    "Control_Date",
+                    "",
+                )
+            ).replace("/", "-")
+
+        if not row_end:
+            row_end = row_start
 
         if (
             row_employee_id == clean(employee_id)
-            and row_date == clean(control_date)
+            and row_start == clean(period_start).replace("/", "-")
         ):
-
+            row["_row_number"] = row_number
             result.append(row)
 
     return result
 
-def create_assignments(control_date):
+def create_employee_assignments(employee, period_start, period_end):
+    employee_id = clean(employee.get("Employee_ID", ""))
+    employee_name = clean(employee.get("Employee_Name", ""))
 
-    print(
-        f"Starting assignment creation for {control_date}"
-    )
+    # اگر قبلاً در این دوره برای کارمند تخصیص ساخته شده، چیزی نساز
+    if employee_has_assignments(employee_id, period_start, period_end):
+        return True
 
-    if assignment_exists(control_date):
-
-        print(
-            f"Assignments already exist for {control_date}"
-        )
-
-        return False
-
-    employees = get_active_employees()
     products = get_available_products()
 
-    if not employees:
-
-        print(
-            "No active employees found."
-        )
-
-        return False
-
     if not products:
-
-        print(
-            "No active products found."
-        )
-
         return False
 
-    total_required = 0
+    # تعداد کالاهای مورد نیاز
+    target = safe_int(employee.get("Daily_Target", 50))
+    if target <= 0:
+        target = 50
 
-    for employee in employees:
+    # کالاهایی که قبلاً در همین دوره به کارکنان دیگر اختصاص داده شده‌اند
+    existing_records = assignments_sheet.get_all_records()
 
-        daily_target = safe_int(
-            employee.get(
-                "Daily_Target",
-                50,
-            ),
-            default=50,
-        )
+    used_product_ids = set()
 
-        if daily_target > 0:
-            total_required += daily_target
+    for row in existing_records:
+        row_start = clean(row.get("Period_Start", ""))
+        row_end = clean(row.get("Period_End", ""))
 
-    if len(products) < total_required:
+        if row_start == clean(period_start) and row_end == clean(period_end):
+            product_id = clean(row.get("Product_ID", ""))
+            if product_id:
+                used_product_ids.add(product_id)
 
-        print(
-            "Not enough active products. "
-            f"Required: {total_required}, "
-            f"Available: {len(products)}"
-        )
+    # انتخاب کالاهای آزاد
+    selected_products = []
 
+    for product in products:
+        product_id = clean(product.get("Product_ID", ""))
+
+        if not product_id:
+            continue
+
+        if product_id in used_product_ids:
+            continue
+
+        selected_products.append(product)
+
+        if len(selected_products) >= target:
+            break
+
+    if len(selected_products) < target:
         return False
 
     rows = []
-    product_index = 0
 
-    for employee in employees:
+    for sequence, product in enumerate(selected_products, start=1):
+        assignment_id = str(uuid.uuid4())
 
-        employee_id = clean(
-            employee.get(
-                "Employee_ID",
-                "",
-            )
-        )
-
-        employee_name = clean(
-            employee.get(
-                "Employee_Name",
-                "",
-            )
-        )
-
-        daily_target = safe_int(
-            employee.get(
-                "Daily_Target",
-                50,
-            ),
-            default=50,
-        )
-
-        if not employee_id:
-            print(
-                f"Skipped employee without ID: "
-                f"{employee_name}"
-            )
-            continue
-
-        if daily_target <= 0:
-            continue
-
-        for sequence in range(
-            1,
-            daily_target + 1,
-        ):
-
-            if product_index >= len(products):
-                break
-
-            product = products[product_index]
-
-            product_id = clean(
-                product.get(
-                    "Product_ID",
-                    "",
-                )
-            )
-
-            product_name = clean(
-                product.get(
-                    "Product_Name",
-                    "",
-                )
-            )
-
-            assignment_id = str(
-                uuid.uuid4()
-            )
-
-            # دقیقاً ۹ ستون مطابق Assignments
-            rows.append(
-                [
-                    assignment_id,
-                    control_date,
-                    employee_id,
-                    employee_name,
-                    product_id,
-                    product_name,
-                    sequence,
-                    "PENDING",
-                    "",
-                ]
-            )
-
-            product_index += 1
-
-    if not rows:
-
-        print(
-            "No assignment rows created."
-        )
-
-        return False
-
-    try:
-
-        assignments_sheet.append_rows(
-            rows,
-            value_input_option="USER_ENTERED",
-        )
-
-        print(
-            f"{len(rows)} assignment rows created."
-        )
-
-        return True
-
-    except Exception as error:
-
-        print(
-            "Assignment creation error:",
-            error,
-        )
-
-        return False
-
-
-def ensure_today_assignments():
-
-    control_day = get_active_control_day()
-
-    if not control_day:
-
-        print(
-            "No active control day for today."
-        )
-
-        return False
-
-    control_date = clean(
-        control_day.get(
-            "Control_Date",
+        rows.append([
+            assignment_id,
+            period_start,
+            employee_id,
+            employee_name,
+            clean(product.get("Product_ID", "")),
+            clean(product.get("Product_Name", "")),
+            sequence,
+            "PENDING",
             "",
-        )
-    )
+            period_start,
+            period_end
+        ])
 
-    if assignment_exists(control_date):
+    assignments_sheet.append_rows(rows, value_input_option="USER_ENTERED")
 
-        print(
-            f"Assignments already exist for {control_date}"
-        )
+    return True
 
-        return True
 
-    return create_assignments(
-        control_date
-    )
-    
+
+
 def save_inventory_record(
     assignment,
     real_stock,
@@ -1185,25 +1150,14 @@ def save_inventory_record(
 # ASSIGNMENT LOOKUP
 # =========================================================
 
-
-def get_pending_assignment(
+def find_completed_inventory_record(
     employee_id,
-    control_date,
+    product_id,
+    period_start,
+    period_end,
 ):
 
-    records = assignments_sheet.get_all_records(
-        expected_headers=[
-            "Assignment_ID",
-            "Control_Date",
-            "Employee_ID",
-            "Employee_Name",
-            "Product_ID",
-            "Product_Name",
-            "Sequence",
-            "Status",
-            "Completed_At",
-        ]
-    )
+    records = inventory_records_sheet.get_all_records()
 
     for row_number, row in enumerate(
         records,
@@ -1217,14 +1171,21 @@ def get_pending_assignment(
             )
         )
 
-        row_date = clean(
+        row_product_id = clean(
             row.get(
-                "Control_Date",
+                "Product_ID",
                 "",
             )
         )
 
-        status = clean(
+        row_control_date = clean(
+            row.get(
+                "Control_Date",
+                "",
+            )
+        ).replace("/", "-")
+
+        row_status = clean(
             row.get(
                 "Status",
                 "",
@@ -1233,8 +1194,9 @@ def get_pending_assignment(
 
         if (
             row_employee_id == clean(employee_id)
-            and row_date == clean(control_date)
-            and status == "PENDING"
+            and row_product_id == clean(product_id)
+            and clean(period_start) <= row_control_date <= clean(period_end)
+            and row_status == "COMPLETED"
         ):
 
             row["_row_number"] = row_number
@@ -1242,6 +1204,59 @@ def get_pending_assignment(
             return row
 
     return None
+
+def get_pending_assignment(
+    employee_id,
+    period_start,
+    period_end,
+):
+    records = assignments_sheet.get_all_records(
+        expected_headers=[
+            "Assignment_ID",
+            "Control_Date",
+            "Employee_ID",
+            "Employee_Name",
+            "Product_ID",
+            "Product_Name",
+            "Sequence",
+            "Status",
+            "Completed_At",
+            "Period_Start",
+            "Period_End",
+        ]
+    )
+
+    target_employee_id = clean(employee_id)
+    target_period_start = clean(
+        period_start
+    ).replace("/", "-")
+
+    for row_number, row in enumerate(
+        records,
+        start=2,
+    ):
+        row_employee_id = clean(
+            row.get("Employee_ID", "")
+        )
+
+        row_start = clean(
+            row.get("Period_Start", "")
+        ).replace("/", "-")
+
+        status = clean(
+            row.get("Status", "")
+        ).upper()
+
+        if (
+            row_employee_id == target_employee_id
+            and row_start == target_period_start
+            and status == "PENDING"
+        ):
+            row["_row_number"] = row_number
+            return row
+
+    return None
+
 
 # =========================================================
 # ASSIGNMENT UPDATE
@@ -1486,12 +1501,14 @@ def get_user_employee(chat_id):
 
 def get_employee_progress(
     employee_id,
-    control_date,
+    period_start,
+    period_end,
 ):
 
     assignments = get_employee_assignments(
         employee_id,
-        control_date,
+        period_start,
+        period_end,
     )
 
     total = len(assignments)
@@ -1508,30 +1525,31 @@ def get_employee_progress(
         ).upper()
 
         if status == "COMPLETED":
-
             completed += 1
 
     pending = total - completed
 
     return total, completed, pending
 
-
 def show_progress(
     chat_id,
     employee_id,
-    control_date,
+    period_start,
+    period_end,
 ):
 
     total, completed, pending = (
         get_employee_progress(
             employee_id,
-            control_date,
+            period_start,
+            period_end,
         )
     )
 
     send_message(
         chat_id,
-        "📊 وضعیت شمارش امروز\n\n"
+        "📊 وضعیت شمارش این دوره\n\n"
+        f"📅 دوره: {period_start} تا {period_end}\n"
         f"کل کالاها: {total}\n"
         f"تکمیل‌شده: {completed}\n"
         f"باقی‌مانده: {pending}",
@@ -1541,34 +1559,135 @@ def show_progress(
 # REGISTRATION
 # =========================================================
 
-def handle_start(
-    chat_id,
-    username,
-):
+def handle_start_counting(chat_id):
 
-    row_number, user = find_user(chat_id)
+    user, employee_row, employee = get_user_employee(chat_id)
 
-    if user:
-
+    if not user:
         send_message(
             chat_id,
-            "✅ شما قبلاً در سیستم ثبت شده‌اید.",
+            "❌ ابتدا باید ثبت‌نام کنید.",
             main_menu(),
         )
+        return
+
+    if not employee:
+        send_message(
+            chat_id,
+            "❌ اطلاعات پرسنل شما در بخش Employees پیدا نشد.",
+            main_menu(),
+        )
+        return
+
+    control_period = get_active_control_period()
+
+    if not control_period:
+        send_message(
+            chat_id,
+            "ℹ️ در حال حاضر دوره فعال شمارش موجودی وجود ندارد.",
+            main_menu(),
+        )
+        return
+
+    period_start = clean(
+        control_period.get("Period_Start", "")
+    )
+
+    period_end = clean(
+        control_period.get("Period_End", "")
+    )
+
+    employee_id = clean(
+        employee.get("Employee_ID", "")
+    )
+
+    employee_name = clean(
+        employee.get("Employee_Name", "")
+    )
+
+    if not employee_id:
+        send_message(
+            chat_id,
+            "❌ شناسه کارمند شما پیدا نشد.",
+            main_menu(),
+        )
+        return
+
+    if not employee_has_assignments(
+        employee_id,
+        period_start,
+        period_end,
+    ):
+
+        success = create_employee_assignments(
+            {
+                "Employee_ID": employee_id,
+                "Employee_Name": employee_name,
+                "Daily_Target": 50,
+            },
+            period_start,
+            period_end,
+        )
+
+        if not success:
+            send_message(
+                chat_id,
+                "❌ در حال حاضر امکان اختصاص ۵۰ کالا وجود ندارد.\n\n"
+                "لطفاً با مسئول سیستم تماس بگیرید.",
+                main_menu(),
+            )
+            return
+
+    assignment = get_pending_assignment(
+        employee_id,
+        period_start,
+        period_end,
+    )
+
+    if not assignment:
+
+        total, completed, pending = get_employee_progress(
+            employee_id,
+            period_start,
+            period_end,
+        )
+
+        if total > 0 and pending == 0:
+            send_message(
+                chat_id,
+                "🎉 شمارش این دوره شما کامل شده است.\n\n"
+                f"📦 تعداد کل کالاها: {total}\n"
+                f"✅ تکمیل‌شده: {completed}\n\n"
+                "تا شروع دوره بعد کالای جدیدی برای شما اختصاص داده نمی‌شود.",
+                main_menu(),
+            )
+        else:
+            send_message(
+                chat_id,
+                "❌ در حال حاضر کالایی برای شمارش شما پیدا نشد.",
+                main_menu(),
+            )
 
         return
 
-    waiting_for_code.add(
-        clean(chat_id)
+    waiting_for_real_stock[chat_id] = assignment
+
+    total, completed, pending = get_employee_progress(
+        employee_id,
+        period_start,
+        period_end,
     )
 
     send_message(
         chat_id,
-        "👋 سلام!\n\n"
-        "برای استفاده از سیستم کنترل موجودی، "
-        "لطفاً کد پرسنلی خود را ارسال کنید.",
+        "📦 شروع شمارش موجودی\n\n"
+        f"📅 دوره: {period_start} تا {period_end}\n"
+        f"📊 پیشرفت: {completed} از {total}\n"
+        f"⏳ باقی‌مانده: {pending}\n\n"
+        f"🏷️ کالا: {clean(assignment.get('Product_Name', ''))}\n"
+        f"🔢 کد کالا: {clean(assignment.get('Product_ID', ''))}\n\n"
+        "🔢 موجودی واقعی این کالا را وارد کنید:",
     )
-
 
 def handle_personnel_code(chat_id, personnel_code):
     
@@ -1668,136 +1787,6 @@ def handle_personnel_code(chat_id, personnel_code):
     send_main_menu(chat_id)
 
 
-# =========================================================
-# START COUNTING
-# =========================================================
-
-def handle_start_counting(
-    chat_id,
-):
-
-    user, employee_row, employee = (
-        get_user_employee(chat_id)
-    )
-
-    if not user:
-
-        handle_start(
-            chat_id,
-            "",
-        )
-
-        return
-
-    if not employee:
-
-        send_message(
-            chat_id,
-            "❌ اطلاعات پرسنل شما در بخش Employees پیدا نشد.",
-        )
-
-        return
-
-    control_day = get_active_control_day()
-
-    if not control_day:
-
-        send_message(
-            chat_id,
-            "ℹ️ امروز روز کنترل موجودی نیست یا "
-            "روز کنترل هنوز فعال نشده است.",
-        )
-
-        return
-
-    control_date = clean(
-        control_day.get(
-            "Control_Date",
-            "",
-        )
-    )
-
-    ensure_today_assignments()
-
-    employee_id = clean(
-        employee.get(
-            "Employee_ID",
-            "",
-        )
-    )
-
-    assignment = get_pending_assignment(
-        employee_id,
-        control_date,
-    )
-
-    if not assignment:
-
-        total, completed, pending = (
-            get_employee_progress(
-                employee_id,
-                control_date,
-            )
-        )
-
-        if total > 0 and pending == 0:
-
-            send_message(
-                chat_id,
-                "🎉 شمارش شما برای امروز کامل شده است.",
-                main_menu(),
-            )
-
-        else:
-
-            send_message(
-                chat_id,
-                "❌ در حال حاضر کالایی برای شمارش شما پیدا نشد.",
-            )
-
-        return
-
-    assignment_id = clean(
-        assignment.get(
-            "Assignment_ID",
-            "",
-        )
-    )
-
-    product_name = clean(
-        assignment.get(
-            "Product_Name",
-            "",
-        )
-    )
-
-    product_id = clean(
-        assignment.get(
-            "Product_ID",
-            "",
-        )
-    )
-
-    sequence = clean(
-        assignment.get(
-            "Sequence",
-            "",
-        )
-    )
-
-    waiting_for_real_stock[
-        clean(chat_id)
-    ] = assignment
-
-    send_message(
-        chat_id,
-        "📦 ثبت موجودی واقعی\n\n"
-        f"کالا {sequence}\n"
-        f"نام کالا: {product_name}\n"
-        f"کد کالا: {product_id}\n\n"
-        "🔢 موجودی واقعی شمارش‌شده را وارد کنید:",
-    )
-
 
 # =========================================================
 # REAL STOCK
@@ -1815,7 +1804,6 @@ def handle_real_stock(
     )
 
     if not assignment:
-
         return
 
     real_stock = normalize_number(text)
@@ -1844,10 +1832,6 @@ def handle_real_stock(
         )
     )
 
-    # -----------------------------------------------------
-    # دریافت موجودی آنلاین از OKCS
-    # -----------------------------------------------------
-
     send_message(
         chat_id,
         "⏳ در حال دریافت موجودی آنلاین کالا از سیستم...",
@@ -1862,160 +1846,17 @@ def handle_real_stock(
     except Exception as error:
 
         print(
-            "OKCS inventory error:",
+            "❌ ERROR GETTING ONLINE STOCK:",
             error,
-            flush=True,
         )
 
         send_message(
             chat_id,
-            "❌ دریافت موجودی آنلاین این کالا از سیستم OKCS "
-            "با خطا مواجه شد.\n\n"
-            f"📦 کالا: {product_name}\n"
-            f"🆔 کد کالا: {product_id}\n\n"
-            "موجودی ثبت نشد.\n"
+            "❌ دریافت موجودی آنلاین کالا با خطا مواجه شد.\n\n"
             "لطفاً دوباره تلاش کنید.",
         )
 
         return
-
-    # -----------------------------------------------------
-    # موجودی آنلاین با موفقیت دریافت شد
-    # -----------------------------------------------------
-
-    waiting_for_real_stock.pop(
-        chat_id,
-        None,
-    )
-
-    row_number = assignment.get(
-        "_row_number"
-    )
-
-    if not row_number:
-
-        send_message(
-            chat_id,
-            "❌ خطا در پیدا کردن ردیف کالا.\n"
-            "اطلاعات ثبت نشد.",
-        )
-
-        return
-
-    try:
-
-        difference = complete_assignment(
-            row_number,
-            real_stock,
-            online_stock,
-        )
-
-    except Exception as error:
-
-        print(
-            "Complete assignment error:",
-            error,
-            flush=True,
-        )
-
-        send_message(
-            chat_id,
-            "❌ خطا هنگام ثبت اطلاعات در Google Sheets.\n\n"
-            "اطلاعات این کالا تکمیل نشد. لطفاً دوباره تلاش کنید.",
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # متن مغایرت
-    # -----------------------------------------------------
-
-    if difference == 0:
-
-        difference_text = "✅ بدون مغایرت"
-
-    elif difference > 0:
-
-        difference_text = (
-            f"🟢 مازاد: +{difference}"
-        )
-
-    else:
-
-        difference_text = (
-            f"🔴 کسری: {difference}"
-        )
-
-    employee_id = clean(
-        assignment.get(
-            "Employee_ID",
-            "",
-        )
-    )
-
-    control_date = clean(
-        assignment.get(
-            "Control_Date",
-            today_date(),
-        )
-    )
-
-    total, completed, pending = (
-        get_employee_progress(
-            employee_id,
-            control_date,
-        )
-    )
-
-    send_message(
-        chat_id,
-        "✅ اطلاعات با موفقیت ثبت شد.\n\n"
-        f"📦 کالا: {product_name}\n"
-        f"📊 موجودی واقعی: {real_stock}\n"
-        f"💻 موجودی آنلاین: {online_stock}\n"
-        f"📌 مغایرت: {difference_text}\n\n"
-        f"📈 پیشرفت امروز:\n"
-        f"{completed} از {total} کالا تکمیل شده\n"
-        f"باقی‌مانده: {pending}",
-        main_menu(),
-    )
-
-# =========================================================
-# ONLINE STOCK
-# =========================================================
-
-def handle_online_stock(
-    chat_id,
-    text,
-):
-
-    data = waiting_for_online_stock.get(
-        clean(chat_id)
-    )
-
-    if not data:
-
-        return
-
-    online_stock = normalize_number(text)
-
-    if online_stock is None or online_stock < 0:
-
-        send_message(
-            chat_id,
-            "❌ مقدار واردشده صحیح نیست.\n\n"
-            "لطفاً فقط عدد موجودی آنلاین را وارد کنید.",
-        )
-
-        return
-
-    waiting_for_online_stock.pop(
-        clean(chat_id),
-        None,
-    )
-
-    assignment = data["assignment"]
-    real_stock = data["real_stock"]
 
     row_number = assignment.get(
         "_row_number"
@@ -2030,18 +1871,7 @@ def handle_online_stock(
 
         return
 
-    difference = complete_assignment(
-        row_number,
-        real_stock,
-        online_stock,
-    )
-
-    product_name = clean(
-        assignment.get(
-            "Product_Name",
-            "",
-        )
-    )
+    difference = real_stock - online_stock
 
     if difference == 0:
 
@@ -2050,7 +1880,7 @@ def handle_online_stock(
     elif difference > 0:
 
         difference_text = (
-            f"🟢 مازاد: +{difference}"
+            f"🟡 مازاد: +{difference}"
         )
 
     else:
@@ -2059,6 +1889,14 @@ def handle_online_stock(
             f"🔴 کسری: {difference}"
         )
 
+    waiting_for_inventory_confirmation[chat_id] = {
+        "assignment": assignment,
+        "row_number": row_number,
+        "real_stock": real_stock,
+        "online_stock": online_stock,
+        "difference": difference,
+    }
+
     employee_id = clean(
         assignment.get(
             "Employee_ID",
@@ -2066,32 +1904,200 @@ def handle_online_stock(
         )
     )
 
-    control_date = clean(
+    period_start = clean(
         assignment.get(
-            "Control_Date",
-            today_date(),
+            "Period_Start",
+            assignment.get(
+                "Control_Date",
+                today_date(),
+            ),
         )
     )
 
-    total, completed, pending = (
-        get_employee_progress(
-            employee_id,
-            control_date,
+    period_end = clean(
+        assignment.get(
+            "Period_End",
+            period_start,
         )
+    )
+
+    total, completed, pending = get_employee_progress(
+        employee_id,
+        period_start,
+        period_end,
     )
 
     send_message(
         chat_id,
-        "✅ اطلاعات با موفقیت ثبت شد.\n\n"
+        "📋 نتیجه شمارش موجودی\n\n"
         f"📦 کالا: {product_name}\n"
         f"📊 موجودی واقعی: {real_stock}\n"
         f"💻 موجودی آنلاین: {online_stock}\n"
         f"📌 مغایرت: {difference_text}\n\n"
-        f"📈 پیشرفت امروز:\n"
-        f"{completed} از {total} کالا تکمیل شده\n"
-        f"باقی‌مانده: {pending}",
-        main_menu(),
+        "❓ آیا موجودی واردشده صحیح است؟",
+        [
+            [{"text": "✅ بله، صحیح است"}],
+            [{"text": "❌ خیر، اصلاح می‌کنم"}],
+        ],
     )
+
+
+
+
+# =========================================================
+# INVENTORY CONFIRMATION
+# =========================================================
+
+def handle_inventory_confirmation(
+    chat_id,
+    text,
+):
+
+    chat_id = clean(chat_id)
+
+    data = waiting_for_inventory_confirmation.get(
+        chat_id
+    )
+
+    if not data:
+        return
+
+    text = clean(text)
+
+    # -----------------------------------------------------
+    # اصلاح موجودی
+    # -----------------------------------------------------
+
+    if text == "❌ خیر، اصلاح می‌کنم":
+
+        waiting_for_inventory_confirmation.pop(
+            chat_id,
+            None,
+        )
+
+        assignment = data.get(
+            "assignment"
+        )
+
+        waiting_for_real_stock[chat_id] = assignment
+
+        product_name = clean(
+            assignment.get(
+                "Product_Name",
+                "",
+            )
+        )
+
+        send_message(
+            chat_id,
+            "✏️ اصلاح موجودی کالا\n\n"
+            f"📦 کالا: {product_name}\n\n"
+            "🔢 موجودی واقعی صحیح این کالا را وارد کنید:",
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # تأیید موجودی
+    # -----------------------------------------------------
+
+    if text == "✅ بله، صحیح است":
+
+        assignment = data.get(
+            "assignment"
+        )
+
+        row_number = data.get(
+            "row_number"
+        )
+
+        real_stock = data.get(
+            "real_stock"
+        )
+
+        online_stock = data.get(
+            "online_stock"
+        )
+
+        if not row_number:
+
+            send_message(
+                chat_id,
+                "❌ خطا در پیدا کردن ردیف کالا.",
+            )
+
+            return
+
+        try:
+
+            difference = complete_assignment(
+                row_number,
+                real_stock,
+                online_stock,
+            )
+
+        except Exception as error:
+
+            print(
+                "❌ ERROR COMPLETING ASSIGNMENT:",
+                error,
+            )
+
+            send_message(
+                chat_id,
+                "❌ ثبت نهایی موجودی با خطا مواجه شد.\n\n"
+                "لطفاً دوباره گزینه «✅ بله، صحیح است» را انتخاب کنید.",
+            )
+
+            return
+
+        waiting_for_inventory_confirmation.pop(
+            chat_id,
+            None,
+        )
+
+        waiting_for_real_stock.pop(
+            chat_id,
+            None,
+        )
+
+        if difference == 0:
+
+            difference_text = "✅ بدون مغایرت"
+
+        elif difference > 0:
+
+            difference_text = (
+                f"🟡 مازاد: +{difference}"
+            )
+
+        else:
+
+            difference_text = (
+                f"🔴 کسری: {difference}"
+            )
+
+        product_name = clean(
+            assignment.get(
+                "Product_Name",
+                "",
+            )
+        )
+
+        send_message(
+            chat_id,
+            "✅ موجودی با موفقیت ثبت شد.\n\n"
+            f"📦 کالا: {product_name}\n"
+            f"📌 نتیجه: {difference_text}\n\n"
+            "⏭️ در حال رفتن به کالای بعدی...",
+        )
+
+        handle_start_counting(
+            chat_id
+        )
+
+        return
+
 
 # =========================================================
 # ASSIGNED PRODUCTS
@@ -2114,20 +2120,28 @@ def handle_assigned_products(
 
         return
 
-    control_day = get_active_control_day()
+    control_period = get_active_control_period()
 
-    if not control_day:
+    if not control_period:
 
         send_message(
             chat_id,
-            "ℹ️ امروز روز کنترل موجودی نیست.",
+            "ℹ️ در حال حاضر دوره فعال شمارش موجودی وجود ندارد.",
+            main_menu(),
         )
 
         return
 
-    control_date = clean(
-        control_day.get(
-            "Control_Date",
+    period_start = clean(
+        control_period.get(
+            "Period_Start",
+            "",
+        )
+    )
+
+    period_end = clean(
+        control_period.get(
+            "Period_End",
             "",
         )
     )
@@ -2141,14 +2155,17 @@ def handle_assigned_products(
 
     assignments = get_employee_assignments(
         employee_id,
-        control_date,
+        period_start,
+        period_end,
     )
 
     if not assignments:
 
         send_message(
             chat_id,
-            "📋 برای امروز کالایی به شما اختصاص داده نشده است.",
+            "📋 هنوز کالایی برای شما در این دوره اختصاص داده نشده است.\n\n"
+            "برای دریافت کالا، ابتدا «📦 شروع شمارش موجودی» را بزنید.",
+            main_menu(),
         )
 
         return
@@ -2170,6 +2187,13 @@ def handle_assigned_products(
             )
         )
 
+        product_id = clean(
+            assignment.get(
+                "Product_ID",
+                "",
+            )
+        )
+
         status = clean(
             assignment.get(
                 "Status",
@@ -2178,31 +2202,32 @@ def handle_assigned_products(
         ).upper()
 
         if status == "COMPLETED":
-
             completed += 1
-            icon = "✅"
-
+            status_text = "✅ تکمیل شده"
         else:
-
-            icon = "⬜"
+            status_text = "⏳ در انتظار شمارش"
 
         lines.append(
-            f"{icon} {index}. {product_name}"
+            f"{index}. {product_name}\n"
+            f"   کد: {product_id}\n"
+            f"   وضعیت: {status_text}"
         )
 
     text = (
-        "📋 کالاهای اختصاص‌یافته امروز\n\n"
-        f"تاریخ: {control_date}\n"
-        f"تعداد کل: {total}\n"
-        f"تکمیل‌شده: {completed}\n"
-        f"باقی‌مانده: {total - completed}\n\n"
-        + "\n".join(lines[:100])
+        "📋 کالاهای اختصاص‌یافته این دوره\n\n"
+        f"📅 دوره: {period_start} تا {period_end}\n"
+        f"📦 تعداد کل: {total}\n"
+        f"✅ تکمیل‌شده: {completed}\n"
+        f"⏳ باقی‌مانده: {total - completed}\n\n"
+        + "\n\n".join(lines)
     )
 
     send_message(
         chat_id,
         text,
+        main_menu(),
     )
+
 
 
 # =========================================================
@@ -2287,10 +2312,235 @@ def handle_help(
 # MESSAGE HANDLER
 # =========================================================
 
+def handle_inventory_correction(
+    chat_id,
+    text,
+):
+
+    chat_id = clean(chat_id)
+    text = clean(text)
+
+    # -----------------------------------------------------
+    # STEP 2: ENTER CORRECTED REAL STOCK
+    # -----------------------------------------------------
+
+    if (
+        chat_id in waiting_for_inventory_correction
+        and waiting_for_inventory_correction[chat_id] is not None
+    ):
+
+        record = waiting_for_inventory_correction[chat_id]
+
+        try:
+            corrected_real_stock = int(text)
+
+            if corrected_real_stock < 0:
+                raise ValueError
+
+        except ValueError:
+
+            send_message(
+                chat_id,
+                "❌ مقدار موجودی صحیح نیست.\n\n"
+                "لطفاً فقط یک عدد صفر یا بیشتر وارد کنید.",
+            )
+            return
+
+        product_id = clean(
+            record.get(
+                "Product_ID",
+                "",
+            )
+        )
+
+        product_name = clean(
+            record.get(
+                "Product_Name",
+                "",
+            )
+        )
+
+        online_stock = safe_int(
+            record.get(
+                "Online_Stock",
+                0,
+            )
+        )
+
+        difference = (
+            corrected_real_stock
+            - online_stock
+        )
+
+        if difference == 0:
+            variance_type = "NO_VARIANCE"
+
+        elif difference > 0:
+            variance_type = "SURPLUS"
+
+        else:
+            variance_type = "SHORTAGE"
+
+        if online_stock == 0:
+
+            if difference == 0:
+                variance_percent = 0
+
+            else:
+                variance_percent = ""
+
+        else:
+
+            variance_percent = (
+                abs(difference)
+                / online_stock
+                * 100
+            )
+
+        row_number = record.get(
+            "_row_number"
+        )
+
+        if not row_number:
+            waiting_for_inventory_correction.pop(
+                chat_id,
+                None,
+            )
+
+            send_message(
+                chat_id,
+                "❌ خطا در پیدا کردن رکورد موجودی.",
+                main_menu(),
+            )
+            return
+
+        inventory_records_sheet.update(
+            f"H{row_number}:L{row_number}",
+            [[
+                corrected_real_stock,
+                online_stock,
+                difference,
+                variance_type,
+                variance_percent,
+            ]],
+            value_input_option="USER_ENTERED",
+        )
+
+        waiting_for_inventory_correction.pop(
+            chat_id,
+            None,
+        )
+
+        send_message(
+            chat_id,
+            "✅ موجودی با موفقیت اصلاح شد.\n\n"
+            f"🏷️ کالا: {product_name}\n"
+            f"🔢 کد کالا: {product_id}\n"
+            f"📊 موجودی جدید: {corrected_real_stock}\n"
+            f"💻 موجودی آنلاین: {online_stock}\n"
+            f"📈 اختلاف: {difference}\n\n"
+            "🔢 پیشرفت شمارش شما تغییر نکرده است.",
+            main_menu(),
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # STEP 1: ENTER PRODUCT CODE
+    # -----------------------------------------------------
+
+    product_id = text
+
+    if not product_id:
+
+        send_message(
+            chat_id,
+            "❌ کد کالا وارد نشده است.\n\n"
+            "لطفاً کد کالا را وارد کنید.",
+        )
+        return
+
+    user, employee_row, employee = get_user_employee(
+        chat_id
+    )
+
+    if not employee:
+
+        send_message(
+            chat_id,
+            "❌ اطلاعات پرسنل شما پیدا نشد.",
+            main_menu(),
+        )
+        return
+
+    control_period = get_active_control_period()
+
+    if not control_period:
+
+        send_message(
+            chat_id,
+            "ℹ️ در حال حاضر دوره فعال شمارش موجودی وجود ندارد.",
+            main_menu(),
+        )
+        return
+
+    period_start = clean(
+        control_period.get(
+            "Period_Start",
+            "",
+        )
+    )
+
+    period_end = clean(
+        control_period.get(
+            "Period_End",
+            "",
+        )
+    )
+
+    employee_id = clean(
+        employee.get(
+            "Employee_ID",
+            "",
+        )
+    )
+
+    record = find_completed_inventory_record(
+        employee_id,
+        product_id,
+        period_start,
+        period_end,
+    )
+
+    if not record:
+
+        send_message(
+            chat_id,
+            "❌ برای این کد کالا، شمارش تکمیل‌شده‌ای "
+            "از شما در دوره فعال پیدا نشد.\n\n"
+            "لطفاً کد کالا را بررسی کنید.",
+            main_menu(),
+        )
+        return
+
+    waiting_for_inventory_correction[
+        chat_id
+    ] = record
+
+    send_message(
+        chat_id,
+        "✏️ اصلاح موجودی کالا\n\n"
+        f"🏷️ کالا: {clean(record.get('Product_Name', ''))}\n"
+        f"🔢 کد کالا: {product_id}\n"
+        f"📊 موجودی ثبت‌شده فعلی: "
+        f"{record.get('Real_Stock', '')}\n\n"
+        "🔢 موجودی واقعی صحیح را وارد کنید:",
+    )
+
+
 def handle_message(message):
 
     if not message:
-
         return
 
     chat = message.get(
@@ -2298,12 +2548,9 @@ def handle_message(message):
         {},
     )
 
-    chat_id = chat.get(
-        "id"
-    )
+    chat_id = chat.get("id")
 
     if chat_id is None:
-
         return
 
     chat_id = clean(chat_id)
@@ -2328,7 +2575,6 @@ def handle_message(message):
     )
 
     if not text:
-
         return
 
     print(
@@ -2341,9 +2587,12 @@ def handle_message(message):
 
     if text == "/start":
 
-        handle_start(
+        waiting_for_code.add(chat_id)
+
+        send_message(
             chat_id,
-            username,
+            "👋 خوش آمدید.\n\n"
+            "🔐 لطفاً کد پرسنلی خود را وارد کنید:",
         )
 
         return
@@ -2355,6 +2604,19 @@ def handle_message(message):
     if chat_id in waiting_for_code:
 
         handle_personnel_code(
+            chat_id,
+            text,
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # INVENTORY CONFIRMATION
+    # -----------------------------------------------------
+
+    if chat_id in waiting_for_inventory_confirmation:
+
+        handle_inventory_confirmation(
             chat_id,
             text,
         )
@@ -2374,10 +2636,38 @@ def handle_message(message):
 
         return
 
-  
+    # -----------------------------------------------------
+    # INVENTORY CORRECTION
+    # -----------------------------------------------------
+
+    if chat_id in waiting_for_inventory_correction:
+
+        handle_inventory_correction(
+            chat_id,
+            text,
+        )
+
+        return
+
     # -----------------------------------------------------
     # MAIN MENU
     # -----------------------------------------------------
+
+    if text == "✏️ اصلاح موجودی کالا":
+
+        send_message(
+            chat_id,
+            "✏️ اصلاح موجودی کالا\n\n"
+            "🔢 لطفاً کد کالا را وارد کنید:",
+            )
+
+        waiting_for_inventory_correction[
+            chat_id
+        ] = None
+
+        return
+
+
 
     if text == "📦 شروع شمارش موجودی":
 
@@ -2421,8 +2711,6 @@ def handle_message(message):
         "لطفاً از منوی اصلی استفاده کنید.",
         main_menu(),
     )
-
-
 # =========================================================
 # BALE UPDATE
 # =========================================================
@@ -2569,12 +2857,13 @@ def main():
                             message
                         )
 
-                except Exception as error:
+                except Exception as e:
+                    import traceback
 
                     print(
-                        "Message handling error:",
-                        error,
-                    )
+                         f"Message handling error: {e}")
+
+                    traceback.print_exc()
 
             time.sleep(1)
 
